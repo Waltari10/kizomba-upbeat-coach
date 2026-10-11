@@ -7,6 +7,7 @@ const PHRASES = {
   up: ['Nice, that\'s the up-beat', 'Good, keep rising on the beat', 'Yes! Up on the beat'],
   down: ['Rise on the beat', 'You\'re on the down-beat. Go up on the beat', 'Lift on the beat, sink on the and'],
   still: ['Bend your knees a little more', 'Add a small bounce'],
+  halftime: ['Add a small lift on every beat', 'Bounce on every beat, not every other'],
   irregular: ['Keep a steady pulse', 'Find the pulse of the music'],
 };
 
@@ -59,7 +60,7 @@ export class AudioFeedback {
       const now = performance.now();
       const changed = status !== this.lastSpokenStatus;
       const gap = changed ? 3500 : 9000;
-      const want = status === 'down' || status === 'still' || status === 'irregular' || (status === 'up' && (changed || streak % 16 === 0));
+      const want = status === 'down' || status === 'still' || status === 'irregular' || status === 'halftime' || (status === 'up' && (changed || streak % 16 === 0));
       if (want && streak >= 2 && now - this.lastSpoken > gap) this.say(status);
     }
   }

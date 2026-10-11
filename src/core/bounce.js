@@ -2,12 +2,14 @@
 //
 // We track the height of the hips (normalised by torso length so distance to the camera does
 // not matter) and fit, over the last few beats, the model
-//     h(t) = a + b·t + A·cos(2π·(t − anchor)/period − φ)
-// with least squares. φ tells us where the highest point sits relative to the beat:
-//   peak offset ≈ 0      → the body is UP on the beat (and down on the "and")  → UPBEAT
-//   peak offset ≈ ±½ beat → the body is DOWN on the beat (knees bend on the beat) → DOWNBEAT
-// The fit also tells us how big the bounce is (A) and how rhythmic it is (share of motion
-// explained by a beat-frequency oscillation).
+//     h(t) = a + b·t + A·cos(θ − φ) + B·cos(θ/2 − ψ),   θ = 2π·(t − anchor)/period
+// with least squares. The first oscillation is the once-per-beat bounce; its phase φ tells us
+// where the highest point sits relative to the beat:
+//   peak offset ≈ 0       → the body is UP on the beat (and down on the "and")  → UP-BEAT
+//   peak offset ≈ ±½ beat → the body is DOWN on the beat (knees bend on the beat) → DOWN-BEAT
+// The second (half-tempo) term soaks up movement that repeats every two beats — many Kizomba
+// steps rise and fall over a pair of steps — so it does not get mistaken for noise. The fit also
+// gives the bounce size (A) and how rhythmic the movement is (share of motion explained).
 
 function solve(M, v) {
   // Gaussian elimination with partial pivoting for a small dense system.
@@ -30,7 +32,8 @@ function solve(M, v) {
 export const DEFAULTS = {
   windowBeats: 4,
   minAmplitude: 0.01, // in torso lengths (half of peak-to-peak); ≈ 0.5 cm for an adult
-  minRhythmicity: 0.25,
+  minRhythmicity: 0.2,
+  halfTimeRatio: 0.3, // per-beat bounce smaller than this × the two-beat movement → "half-time"
   upZone: 0.25, // |peak offset| below this many beats counts as "up on the beat"
 };
 
@@ -56,43 +59,48 @@ export class BounceAnalyzer {
 
   // Returns an analysis of the window ending at time t (seconds, same clock as samples/grid).
   analyze(t, grid) {
-    const { windowBeats, minAmplitude, minRhythmicity, upZone } = this.opts;
+    const { windowBeats, minAmplitude, minRhythmicity, halfTimeRatio, upZone } = this.opts;
     if (!grid) return { status: 'no-beat' };
     const P = grid.period;
     const from = t - windowBeats * P;
     const pts = this.samples.filter((s) => s.t >= from && s.t <= t);
-    if (pts.length < 12 || pts[0].t > from + 0.5 * P || t - pts[pts.length - 1].t > 0.5 * P) {
+    if (pts.length < 16 || pts[0].t > from + 0.5 * P || t - pts[pts.length - 1].t > 0.5 * P) {
       return { status: 'insufficient' };
     }
     const w = (2 * Math.PI) / P;
     const tm = (from + t) / 2;
-    // Normal equations for basis [1, (t − tm), cos θ, sin θ]
-    const M = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
-    const v = [0, 0, 0, 0];
+    const K = 6;
+    // Basis [1, (t − tm), cos θ, sin θ, cos θ/2, sin θ/2]
     const rows = pts.map((p) => {
       const th = w * (p.t - grid.anchor);
-      return [1, p.t - tm, Math.cos(th), Math.sin(th)];
+      return [1, p.t - tm, Math.cos(th), Math.sin(th), Math.cos(th / 2), Math.sin(th / 2)];
     });
-    rows.forEach((r, i) => {
-      for (let a = 0; a < 4; a++) {
-        v[a] += r[a] * pts[i].h;
-        for (let b = 0; b < 4; b++) M[a][b] += r[a] * r[b];
-      }
-    });
-    const coef = solve(M, v);
-    if (!coef) return { status: 'insufficient' };
-    const [a0, b0, c, d] = coef;
-    // Variance after removing the linear trend vs. residual after also removing the sinusoid.
-    const trend = solve([[M[0][0], M[0][1]], [M[1][0], M[1][1]]], [v[0], v[1]]);
+    const normal = (k) => {
+      const M = Array.from({ length: k }, () => new Array(k).fill(0));
+      const v = new Array(k).fill(0);
+      rows.forEach((r, i) => {
+        for (let a = 0; a < k; a++) {
+          v[a] += r[a] * pts[i].h;
+          for (let b = 0; b < k; b++) M[a][b] += r[a] * r[b];
+        }
+      });
+      return solve(M, v);
+    };
+    const coef = normal(K);
+    const trend = normal(2);
+    if (!coef || !trend) return { status: 'insufficient' };
     let ssTrend = 0, ssRes = 0;
     rows.forEach((r, i) => {
       const h = pts[i].h;
       const et = h - (trend[0] + trend[1] * r[1]);
-      const er = h - (a0 + b0 * r[1] + c * r[2] + d * r[3]);
+      let fit = 0;
+      for (let k = 0; k < K; k++) fit += coef[k] * r[k];
       ssTrend += et * et;
-      ssRes += er * er;
+      ssRes += (h - fit) ** 2;
     });
+    const [, , c, d, c2, d2] = coef;
     const amplitude = Math.hypot(c, d);
+    const halfAmplitude = Math.hypot(c2, d2);
     const rhythmicity = ssTrend > 0 ? Math.max(0, 1 - ssRes / ssTrend) : 0;
     let offset = Math.atan2(d, c) / (2 * Math.PI); // beats, peak position relative to beat
     if (offset > 0.5) offset -= 1;
@@ -100,10 +108,11 @@ export class BounceAnalyzer {
     const alignment = Math.cos(2 * Math.PI * offset); // +1 perfect upbeat, −1 perfect downbeat
 
     let status;
-    if (amplitude < minAmplitude) status = 'still';
+    if (Math.max(amplitude, halfAmplitude) < minAmplitude) status = 'still';
     else if (rhythmicity < minRhythmicity) status = 'irregular';
+    else if (amplitude < minAmplitude || amplitude < halfTimeRatio * halfAmplitude) status = 'halftime';
     else status = Math.abs(offset) <= upZone ? 'up' : 'down';
-    return { status, offset, alignment, amplitude, rhythmicity, samples: pts.length };
+    return { status, offset, alignment, amplitude, halfAmplitude, rhythmicity, samples: pts.length };
   }
 }
 

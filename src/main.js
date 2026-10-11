@@ -12,6 +12,7 @@ const STATUS = {
   up: { label: 'UP-BEAT', icon: '✓', sub: 'You rise on the beat. Keep it up!', cls: 'good' },
   down: { label: 'DOWN-BEAT', icon: '↓', sub: 'Go up on the beat, sink on the “and”', cls: 'bad' },
   still: { label: 'Bounce a little', icon: '〰', sub: 'Soft knees: down on the “and”, up on the beat', cls: 'warn' },
+  halftime: { label: 'Every 2nd beat', icon: '½', sub: 'You rise and fall over two beats. Add a small lift on every beat', cls: 'warn' },
   irregular: { label: 'Find the pulse', icon: '♪', sub: 'Keep a steady up-and-down with the music', cls: 'warn' },
   insufficient: { label: 'Step into view', icon: '◎', sub: 'Show your whole body, about 2–3 m from the camera', cls: 'idle' },
   'no-beat': { label: 'Listening for the beat…', icon: '♫', sub: 'Play some Kizomba nearby', cls: 'idle' },
@@ -44,9 +45,12 @@ const saveSettings = () => {
 const app = (window.kizomba = {
   settings,
   log: [],
-  stats: { up: 0, down: 0, still: 0, irregular: 0 },
+  stats: { up: 0, down: 0, still: 0, irregular: 0, halftime: 0 },
   state: 'setup',
   ready: false,
+  perf: { frames: 0, detectMs: 0 },
+  recordPose: false, // set true (e.g. from the console) to keep raw landmarks in poseLog
+  poseLog: [],
 });
 
 let ctx, pose, beatSource, fileBeat, feedback, analyzer, normalizer, wakeLock;
@@ -101,6 +105,7 @@ function bindSetup() {
 function friendlyError(err) {
   if (err?.name === 'NotAllowedError') return 'Camera/microphone permission was denied. Allow access in the browser settings and try again.';
   if (err?.name === 'NotFoundError') return 'No camera or microphone was found.';
+  if (err?.name === 'EncodingError') return 'This browser cannot decode the sound of that video. Try Chrome/Safari, or export it as MP4 (H.264/AAC) or WebM.';
   if (!window.isSecureContext) return 'The camera only works on https:// or http://localhost. Open the https address printed by the server.';
   return `Could not start: ${err?.message || err}`;
 }
@@ -123,7 +128,7 @@ async function start() {
   normalizer = new HeightNormalizer();
   applySensitivity();
   app.log = [];
-  app.stats = { up: 0, down: 0, still: 0, irregular: 0 };
+  app.stats = { up: 0, down: 0, still: 0, irregular: 0, halftime: 0 };
   lastJudgedBeat = null;
   streak = { status: null, n: 0 };
   document.body.dataset.mirror = settings.source !== 'file' && settings.facing === 'user' ? '1' : '0';
@@ -226,8 +231,12 @@ function processFrame(now, meta) {
     analyzer.reset();
     lastJudgedBeat = null;
   }
+  const d0 = performance.now();
   const landmarks = pose.detect(video, fileBeat ? t * 1000 : now);
+  app.perf.frames++;
+  app.perf.detectMs += (performance.now() - d0 - app.perf.detectMs) * 0.05;
   latest = { t, landmarks, sampleT };
+  if (app.recordPose && landmarks) app.poseLog.push({ t: sampleT, lm: landmarks.map((p) => [+p.x.toFixed(5), +p.y.toFixed(5), +(p.visibility ?? 1).toFixed(2)]) });
   const m = hipHeight(landmarks, video.videoWidth / video.videoHeight || 1);
   if (m) analyzer.addSample(sampleT, normalizer.height(m));
   judge(sampleT);
@@ -240,9 +249,11 @@ function judge(t) {
     setStatus({ status: 'no-beat' });
     return;
   }
-  const k = Math.floor((t - grid.anchor) / grid.period - 0.5);
-  if (lastJudgedBeat !== null && k <= lastJudgedBeat) return;
-  lastJudgedBeat = k;
+  // Time of the latest beat that is at least half a beat in the past. (Beat indices are not
+  // stable because the tracker keeps moving its anchor, so we compare absolute times.)
+  const beatT = grid.anchor + Math.floor((t - grid.anchor) / grid.period - 0.5) * grid.period;
+  if (lastJudgedBeat !== null && beatT < lastJudgedBeat + 0.5 * grid.period) return;
+  lastJudgedBeat = beatT;
   const r = analyzer.analyze(t, grid);
   r.bpm = grid.bpm;
   setStatus(r);
@@ -250,7 +261,7 @@ function judge(t) {
   else streak = { status: r.status, n: 1 };
   if (r.status in app.stats) app.stats[r.status]++;
   app.log.push({ t: +t.toFixed(3), status: r.status, offset: r.offset, amplitude: r.amplitude, rhythmicity: r.rhythmicity, bpm: grid.bpm });
-  if (['up', 'down', 'still', 'irregular'].includes(r.status)) {
+  if (['up', 'down', 'still', 'irregular', 'halftime'].includes(r.status)) {
     feedback.onJudgement(r.status, streak.n);
     if (settings.visual) flash(STATUS[r.status].cls);
     pushTimeline(r.status);
@@ -466,7 +477,7 @@ function bindDrawer() {
 }
 
 function renderSummary() {
-  const { up, down, still, irregular } = app.stats;
+  const { up, down, still, irregular, halftime } = app.stats;
   const total = up + down;
   const pct = total ? Math.round((100 * up) / total) : null;
   const mins = (performance.now() - startedAt) / 60000;
@@ -479,9 +490,9 @@ function renderSummary() {
         : pct >= 45
           ? 'Mixed: you switch between the up-beat and the down-beat.'
           : 'Mostly on the down-beat. Try rising on the beat and sinking on the “and”.';
-  $('#sum-details').textContent = `${up} up-beat · ${down} down-beat · ${still} too still · ${irregular} irregular · ${fileBeat ? '' : `${mins.toFixed(1)} min`}`;
+  $('#sum-details').textContent = `${up} up-beat · ${down} down-beat · ${halftime} every-2nd-beat · ${still} too still · ${irregular} irregular · ${fileBeat ? '' : `${mins.toFixed(1)} min`}`;
   $('#sum-timeline').innerHTML = app.log
-    .filter((l) => STATUS[l.status] && ['up', 'down', 'still', 'irregular'].includes(l.status))
+    .filter((l) => ['up', 'down', 'still', 'irregular', 'halftime'].includes(l.status))
     .map((l) => `<i class="${STATUS[l.status].cls}"></i>`)
     .join('');
 }

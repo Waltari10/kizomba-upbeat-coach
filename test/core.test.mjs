@@ -81,3 +81,22 @@ test('non-rhythmic movement is reported as irregular', () => {
   assert.notEqual(r.status, 'up');
   assert.notEqual(r.status, 'down');
 });
+
+test('rising and falling over two beats is reported as half-time, not up/down', () => {
+  const P = 60 / 92, grid = { period: P, anchor: 0.1 };
+  const a = new BounceAnalyzer();
+  for (let t = 0; t < 10; t += 1 / 30) a.addSample(t, 0.05 * Math.cos((Math.PI * (t - 0.1)) / P + 1.2));
+  assert.equal(a.analyze(9.9, grid).status, 'halftime');
+});
+
+test('a per-beat lift on top of a two-beat sway is still judged', () => {
+  const P = 60 / 92, grid = { period: P, anchor: 0.1 };
+  const a = new BounceAnalyzer();
+  for (let t = 0; t < 10; t += 1 / 30) {
+    const th = (2 * Math.PI * (t - 0.1)) / P;
+    a.addSample(t, 0.04 * Math.cos(th / 2 + 0.7) + 0.025 * Math.cos(th));
+  }
+  const r = a.analyze(9.9, grid);
+  assert.equal(r.status, 'up');
+  assert.ok(Math.abs(r.offset) < 0.05);
+});
