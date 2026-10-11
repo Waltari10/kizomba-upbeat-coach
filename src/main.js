@@ -6,6 +6,7 @@ import { PracticeBeat } from './audio/practiceBeat.js';
 import { analyseFile, SongBeat } from './audio/fileBeat.js';
 import { AudioFeedback } from './ui/feedback.js';
 import { cameraFrameTime } from './core/latency.js';
+import { Calibration } from './ui/calibration.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -32,6 +33,7 @@ const settings = {
   offsetMs: 0,
   sensitivity: 1,
   halfShift: false,
+  calibration: null, // { offsetMs, spreadMs, n, at } from the clap calibration
 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem(STORE_KEY) || '{}'));
@@ -474,7 +476,8 @@ function autoCorrectionText() {
   const mic = beatSource?.inputDelay;
   const micText = mic ? `microphone: −${Math.round(mic.delay * 1000)} ms (${mic.source === 'reported' ? 'reported by the browser' : 'estimated'})`
     : 'microphone: not used (the app plays the music itself)';
-  return `Automatic delay correction: ${camText}; ${micText}.`;
+  const cal = settings.calibration ? ` Clap calibration: ${settings.calibration.offsetMs} ms (set as the fine-tune below).` : '';
+  return `Automatic delay correction: ${camText}; ${micText}.${cal}`;
 }
 
 // ---------- Settings drawer ----------
@@ -533,6 +536,78 @@ function renderSummary() {
     .join('');
 }
 
+// ---------- Delay calibration ----------
+let calibration = null;
+
+function calibrationStatus() {
+  const c = settings.calibration;
+  $('#calib-status').textContent = c
+    ? `Delay calibrated: ${c.offsetMs > 0 ? '+' : ''}${c.offsetMs} ms (${new Date(c.at).toLocaleDateString()})`
+    : 'Delay: automatic correction';
+}
+
+async function startCalibration() {
+  const form = $('#setup-form');
+  settings.facing = form.facing.value;
+  settings.quality = form.quality.value;
+  document.body.dataset.mirror = settings.facing === 'user' ? '1' : '0';
+  $('#calib-run').hidden = false;
+  $('#calib-result').hidden = true;
+  showScreen('calibrate');
+  const dots = $('#calib-dots');
+  calibration = app.calibration = new Calibration({
+    video: $('#calib-video'),
+    facing: settings.facing,
+    quality: settings.quality,
+    onUpdate: (u) => {
+      dots.innerHTML = Array.from({ length: u.want }, (_, i) => `<i class="${i < u.matched ? 'on' : ''}"></i>`).join('');
+      $('#calib-heard').textContent = u.heard;
+      $('#calib-seen').textContent = u.seen;
+      $('#calib-hands').textContent = u.handsVisible ? 'hands in view ✓' : 'hands not in view';
+      app.calibrationProgress = u;
+    },
+    onDone: (r) => {
+      app.calibrationResult = r;
+      $('#calib-run').hidden = true;
+      $('#calib-result').hidden = false;
+      if (r.ok) {
+        settings.offsetMs = Math.max(-250, Math.min(250, r.offsetMs));
+        settings.calibration = { offsetMs: settings.offsetMs, spreadMs: r.spreadMs, n: r.n, at: Date.now() };
+        saveSettings();
+        calibrationStatus();
+        const ms = Math.abs(r.offsetMs);
+        $('#calib-result-text').textContent =
+          ms < 10 ? 'Camera and sound are in sync. Nothing to correct.'
+            : `The camera is ${ms} ms ${r.offsetMs > 0 ? 'behind' : 'ahead of'} the sound. Saved; it's corrected from now on.`;
+        $('#calib-result-detail').textContent = `${r.n} claps measured, agreeing within ±${r.spreadMs} ms.`;
+      } else {
+        $('#calib-result-text').textContent = 'Could not measure the delay reliably.';
+        $('#calib-result-detail').textContent = `${r.reason} (${r.heard} claps heard, ${r.seen} seen.) Nothing was changed.`;
+      }
+    },
+  });
+  try {
+    await calibration.start();
+  } catch (err) {
+    console.error(err);
+    calibration.stop();
+    showScreen('setup');
+    $('#setup-error').textContent = friendlyError(err);
+  }
+}
+
+function bindCalibration() {
+  $('#btn-calibrate').onclick = startCalibration;
+  $('#btn-calib-cancel').onclick = () => {
+    calibration?.stop();
+    showScreen('setup');
+  };
+  $('#btn-calib-retry').onclick = startCalibration;
+  $('#btn-calib-done').onclick = () => showScreen('setup');
+  calibrationStatus();
+}
+
 bindSetup();
 bindDrawer();
+bindCalibration();
 showScreen('setup');

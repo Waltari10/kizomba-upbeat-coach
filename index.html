@@ -85,6 +85,10 @@
 
           <p id="setup-error" class="error" role="alert"></p>
           <button class="primary" type="submit">Start dancing</button>
+          <div class="calib-row">
+            <span id="calib-status" class="muted">Delay: automatic correction</span>
+            <button type="button" id="btn-calibrate" class="secondary">Calibrate delay</button>
+          </div>
           <p class="tip">Tip: prop your phone or laptop up so your whole body (head to feet) is visible, 2–3 m away. Play the music from a speaker (not headphones) so the app can hear it.</p>
         </form>
       </div>
@@ -150,11 +154,35 @@
           <p class="hint" id="d-auto"></p>
           <label>Fine-tune sync <output id="d-offset-out">0</output> ms
             <input id="d-offset" type="range" min="-250" max="250" step="10" /></label>
-          <p class="hint">Delay is corrected automatically. Increase this only if your movement still shows up later than it happens (the green beat lines come before your peaks when you know you're on the beat).</p>
+          <p class="hint">Delay is corrected automatically. For an exact value, use <b>Calibrate delay</b> on the start screen (stop the session first). Or increase this by hand if your movement still shows up later than it happens.</p>
           <label class="check"><input id="d-half" type="checkbox" /> Beat detected on the “and” – shift it by half a beat</label>
           <p class="hint">Watch the pulsing dots: they should flash on the main beat (the bass / kick) of the song.</p>
         </div>
       </aside>
+    </section>
+
+    <!-- ================= Calibration ================= -->
+    <section id="calibrate" class="screen">
+      <div class="stage">
+        <video id="calib-video" playsinline muted></video>
+      </div>
+      <div class="calib-card">
+        <h2>Delay calibration</h2>
+        <div id="calib-run">
+          <p>Stand where you'll dance, hands in view. <b>Clap 8 times, about once a second.</b> No music needed. The app hears each clap and sees your hands meet, and measures the delay between the two.</p>
+          <div id="calib-dots" class="calib-dots"></div>
+          <p class="muted"><span id="calib-heard">0</span> heard · <span id="calib-seen">0</span> seen · <span id="calib-hands">hands not in view</span></p>
+          <button type="button" id="btn-calib-cancel" class="secondary">Cancel</button>
+        </div>
+        <div id="calib-result" hidden>
+          <p id="calib-result-text" class="verdict"></p>
+          <p id="calib-result-detail" class="muted"></p>
+          <div class="calib-actions">
+            <button type="button" id="btn-calib-retry" class="secondary">Try again</button>
+            <button type="button" id="btn-calib-done" class="primary">Done</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ================= Summary ================= -->

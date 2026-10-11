@@ -138,6 +138,58 @@ try {
     await page.context().close();
   }
 
+  // 5. Delay calibration.
+  {
+    // (a) Noisy real footage (six people clapping on a stage, audience noise): the quality gate
+    //     must refuse to save anything rather than store a doubtful value.
+    const page = await newPage();
+    await page.context().addInitScript(FAKE_MEDIA('/test/fixtures/media/clap/IDvIo_LRIZ4.webm'));
+    await page.reload();
+    await page.click('#btn-calibrate');
+    await page.waitForFunction(() => window.kizomba.calibrationResult, null, { timeout: 90000, polling: 1000 });
+    const r = await page.evaluate(() => ({ ok: window.kizomba.calibrationResult.ok, cal: window.kizomba.settings.calibration, shown: !document.querySelector('#calib-result').hidden }));
+    check(r.shown && (r.ok || r.cal === null), `calibration (noisy footage): result shown, ${r.ok ? 'measured' : 'refused, nothing saved'}`);
+    await page.click('#btn-calib-done');
+
+    // (b) Success path wiring: feed 8 claps that are seen 40 ms after they are heard.
+    await page.click('#btn-calibrate');
+    await page.waitForFunction(() => window.kizomba.calibration?.running, null, { timeout: 60000 });
+    await page.evaluate(() => {
+      const c = window.kizomba.calibration;
+      c.heard = []; c.seen = [];
+      const t0 = performance.now() / 1000 + 100;
+      for (let i = 0; i < 8; i++) { c._add('heard', t0 + i); c._add('seen', t0 + i + 0.04 + (i % 3 - 1) * 0.004); }
+    });
+    await page.waitForFunction(() => window.kizomba.calibrationResult?.ok, null, { timeout: 10000 });
+    const ok = await page.evaluate(() => ({ offset: window.kizomba.settings.offsetMs, status: document.querySelector('#calib-status').textContent, text: document.querySelector('#calib-result-text').textContent }));
+    check(ok.offset === 40 && /\+40 ms/.test(ok.status), `calibration: 40 ms delay saved as the fine-tune ("${ok.text}" / "${ok.status}")`);
+    await page.click('#btn-calib-done');
+    await page.reload();
+    const persisted = await page.evaluate(() => document.querySelector('#calib-status').textContent);
+    check(/\+40 ms/.test(persisted), `calibration persists across reloads ("${persisted}")`);
+
+    // (c) The saved value is applied in a live session and shown in the settings drawer.
+    await page.check('input[name=source][value=mic]');
+    await page.click('button[type=submit]');
+    await page.waitForFunction(() => window.kizomba.ready, null, { timeout: 60000 });
+    await page.waitForTimeout(1500);
+    await page.click('#btn-settings');
+    const drawer = await page.evaluate(() => ({ auto: document.querySelector('#d-auto').textContent, slider: document.querySelector('#d-offset').value }));
+    check(drawer.slider === '40' && /Clap calibration: 40 ms/.test(drawer.auto), `calibration shown in the session drawer (slider ${drawer.slider} ms)`);
+    await page.click('#btn-close-drawer');
+    await page.click('#btn-stop');
+
+    // (d) Cancel returns to the start screen and releases the camera.
+    await page.click('#btn-again');
+    await page.click('#btn-calibrate');
+    await page.waitForFunction(() => window.kizomba.calibration?.running, null, { timeout: 60000 });
+    await page.click('#btn-calib-cancel');
+    const after = await page.evaluate(() => ({ screen: document.body.dataset.screen, running: window.kizomba.calibration.running, cam: !!document.querySelector('#calib-video').srcObject }));
+    check(after.screen === 'setup' && !after.running && !after.cam, 'calibration: cancel returns to the start screen and releases the camera');
+    check(!page.errors.length, `calibration: no page errors (${page.errors.join('; ')})`);
+    await page.context().close();
+  }
+
   // 4. CPU pose fallback: still fast enough to judge.
   {
     const page = await newPage('?cpu=1');

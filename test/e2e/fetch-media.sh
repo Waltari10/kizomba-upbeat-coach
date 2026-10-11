@@ -27,3 +27,8 @@ for id in AYqcApcDXvk cmHPSJAm5uQ mJoPUrwMVmU xmfH0Ykkuv8 u8CVeE_uXzQ; do
   get "$id"
   [ -f "$id.webm" ] || webm -i "$id.mp4" -vf scale=-2:540 "$id.webm"
 done
+
+# Clapping footage for the calibration flow test (six people clapping on stage, noisy audio)
+mkdir -p clap
+[ -f clap/IDvIo_LRIZ4.mp4 ] || yt-dlp -q -f "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720]" --merge-output-format mp4 -o "clap/IDvIo_LRIZ4.mp4" "https://www.youtube.com/watch?v=IDvIo_LRIZ4"
+[ -f clap/IDvIo_LRIZ4.webm ] || webm -i clap/IDvIo_LRIZ4.mp4 clap/IDvIo_LRIZ4.webm

@@ -75,14 +75,26 @@ corrected where it happens (`src/core/latency.js`):
 - **Microphone:** the input delay the browser reports (Chrome), otherwise a **25 ms** default.
   Only the input delay matters, because you and the microphone hear the speaker at the same
   moment.
-- **Settings → Fine-tune sync** adds a manual offset on top. The drawer shows which corrections
-  are active.
+- **Calibrate delay** (start screen) measures what's left on your device. You clap about 8 times,
+  at any pace and without music. Each clap is heard by the microphone and seen by the camera
+  (palms meeting, timed between frames), and the median difference is saved as the sync
+  fine-tune. It is saved only if at least 5 claps were both heard and seen, most claps
+  matched, and they agree within ±30 ms; otherwise nothing changes. Stray sounds don't throw it
+  off: it picks the delay at which the most claps line up.
+- **Settings → Fine-tune sync** holds the calibrated value, and you can still change it by hand.
+  The drawer shows which corrections are active.
 
 At 90 BPM the app accepts your high point within ±167 ms of the beat (±¼ beat). In the simulated
 live test, the timing matches video mode (which has no device delay) to within about 25 ms once
 the applied correction is accounted for. That test can't check the 60 ms camera estimate
 itself, because the simulated camera has no real pipeline delay. It hasn't been measured on a
 real phone or webcam yet.
+
+The calibration's detectors are unit-tested on synthetic claps (sound onsets to <1 ms, hand
+contact between frames to <20 ms), and the screen flow is tested end to end. I couldn't find
+clean real footage of one person clapping in a quiet room, though. On noisy YouTube footage
+(several people, audience noise) the quality gate correctly refuses to save a value. So its
+accuracy on a real device is still to be confirmed.
 
 ## Limitations (measured)
 
@@ -104,7 +116,7 @@ npm test                     # unit tests: onset detection, beat tracking, bounc
 bash test/e2e/fetch-media.sh # downloads public Kizomba videos from YouTube (needs yt-dlp + ffmpeg)
 npx playwright install chromium
 npm run e2e                  # end-to-end simulation in headless Chromium (~12 min, real time)
-npm run e2e:ui               # UI robustness: seeking, settings, restarts, song mode, CPU fallback
+npm run e2e:ui               # UI robustness: seeking, settings, restarts, song mode, calibration, CPU fallback
 ```
 
 The end-to-end simulation (`test/e2e/run-e2e.mjs`):

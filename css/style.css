@@ -28,7 +28,7 @@ button, input, select { font: inherit; color: inherit; }
 .screen { display: none; }
 body[data-screen="setup"] #setup,
 body[data-screen="summary"] #summary { display: flex; }
-body[data-screen="session"] #session { display: block; }
+body[data-screen="session"] #session, body[data-screen="calibrate"] #calibrate { display: block; }
 
 /* ---------- Cards / setup ---------- */
 #setup, #summary { min-height: 100%; align-items: flex-start; justify-content: center; padding: max(16px, env(safe-area-inset-top)) 16px 32px; }
@@ -154,3 +154,18 @@ body[data-visual="0"] .status, body[data-visual="0"] .flash, body[data-visual="0
 .big-score { font-size: 4.5rem; font-weight: 900; line-height: 1; margin-top: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .caps { text-transform: uppercase; letter-spacing: .08em; font-size: .75rem; color: var(--muted); }
 .verdict { font-size: 1.1rem; }
+
+/* ---------- Calibration ---------- */
+.secondary { white-space: nowrap; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.18); background: var(--card-2); cursor: pointer; font-weight: 600; }
+.calib-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+#calibrate { position: fixed; inset: 0; background: #000; overflow: hidden; }
+#calib-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+body[data-mirror="1"] #calib-video { transform: scaleX(-1); }
+.calib-card { position: absolute; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; background: rgba(20,16,28,.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: var(--radius); padding: 16px 18px; }
+.calib-card h2 { margin: 0 0 6px; font-size: 1.2rem; }
+.calib-card p { margin: 6px 0; }
+.calib-dots { display: flex; gap: 8px; margin: 12px 0; }
+.calib-dots i { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,.15); transition: background .2s, transform .2s; }
+.calib-dots i.on { background: var(--good); transform: scale(1.1); }
+.calib-actions { display: flex; gap: 10px; }
+.calib-actions .primary { margin-top: 0; }
