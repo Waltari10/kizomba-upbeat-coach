@@ -73,9 +73,10 @@ The end-to-end simulation (`test/e2e/run-e2e.mjs`):
 1. Plays real Kizomba videos from YouTube through **Analyse a video**. Each runs twice, once as
    is and once with the soundtrack delayed by exactly half a beat. The pose data are identical,
    so a correct analyzer must flip its verdict between the two (up-beat ↔ down-beat).
-2. Runs the **live** path with a fake webcam and a fake microphone fed from the same dance video
-   (`--use-file-for-fake-video-capture` / `--use-file-for-fake-audio-capture`). This covers
-   getUserMedia → AudioWorklet → beat tracker → pose → feedback.
+2. Runs the **live** path with a fake webcam and microphone fed from a dance video (getUserMedia
+   is replaced by a stream captured from the video). This covers mic capture → beat tracker →
+   pose → judging → feedback.
+3. Runs the **built-in practice groove** with the voice coach and beat tick on.
 
 `test/e2e/record-pose.mjs` + `test/e2e/replay.mjs` record raw landmarks once and replay them
 through the analysis code offline, for fast tuning.

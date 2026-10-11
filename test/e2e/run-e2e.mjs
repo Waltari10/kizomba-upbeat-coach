@@ -55,17 +55,40 @@ async function analyseVideo(name, file) {
   console.log(name, results[name]);
 }
 
+// Fake webcam + microphone: getUserMedia is replaced by a stream captured from the dance video
+// playing inside the page (video track via captureStream, audio via a MediaStreamDestination).
+// Chromium's own --use-fake-device-for-media-stream would also work, but on macOS it still waits
+// for the OS camera/microphone permission, which a headless run cannot grant.
+const FAKE_MEDIA = (src) => `
+  (() => {
+    let shared;
+    const make = () => {
+      if (shared) return shared;
+      const el = document.createElement('video');
+      el.src = ${JSON.stringify(src)};
+      el.loop = true;
+      el.playsInline = true;
+      el.style.cssText = 'position:fixed;width:2px;height:2px;opacity:0;pointer-events:none';
+      document.documentElement.appendChild(el);
+      const ac = new AudioContext();
+      const dest = ac.createMediaStreamDestination();
+      ac.createMediaElementSource(el).connect(dest);
+      shared = el.play().then(() => ac.resume()).then(() => ({ el, dest }));
+      return shared;
+    };
+    navigator.mediaDevices.getUserMedia = async (c) => {
+      const { el, dest } = await make();
+      const tracks = [];
+      if (c.video) tracks.push(...el.captureStream().getVideoTracks());
+      if (c.audio) tracks.push(...dest.stream.getAudioTracks());
+      return new MediaStream(tracks);
+    };
+  })();`;
+
 async function liveSimulation() {
-  const browser = await chromium.launch({ channel: 'chromium',
-    args: [
-      '--use-fake-ui-for-media-stream',
-      '--use-fake-device-for-media-stream',
-      `--use-file-for-fake-video-capture=${join(media, 'live_cam.y4m')}`,
-      `--use-file-for-fake-audio-capture=${join(media, 'live_mic.wav')}`,
-      '--autoplay-policy=no-user-gesture-required',
-    ],
-  });
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, permissions: ['camera', 'microphone'] });
+  const browser = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  await ctx.addInitScript(FAKE_MEDIA('/test/fixtures/media/live.webm'));
   const page = await ctx.newPage();
   page.on('console', (m) => m.type() === 'error' && console.log(`  [console] ${m.text()}`));
   await page.goto(`http://localhost:${PORT}/`);
@@ -74,7 +97,7 @@ async function liveSimulation() {
   await page.check('input[name=sound][value=tones]', { force: true });
   await page.click('button[type=submit]');
   await page.waitForFunction(() => window.kizomba.ready, null, { timeout: 120000 });
-  await page.waitForTimeout(30000);
+  await page.waitForTimeout(40000);
   await page.screenshot({ path: join(out, 'live-session.png') });
   await page.click('#btn-settings');
   await page.screenshot({ path: join(out, 'live-settings.png') });
@@ -87,6 +110,28 @@ async function liveSimulation() {
   const bpms = log.filter((l) => l.bpm).map((l) => l.bpm);
   results.live = { ...summarise(stats), judgements: log.length, bpm: bpms.length ? +bpms[bpms.length - 1].toFixed(1) : null };
   console.log('live', results.live);
+}
+
+async function practiceSimulation() {
+  const browser = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
+  const ctx = await browser.newContext({ viewport: { width: 1024, height: 700 } });
+  await ctx.addInitScript(FAKE_MEDIA('/test/fixtures/media/live.webm'));
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`http://localhost:${PORT}/`);
+  await page.check('input[name=source][value=practice]');
+  await page.fill('#bpm', '96');
+  await page.check('input[name=sound][value=voice]', { force: true });
+  await page.check('#beat-click');
+  await page.click('button[type=submit]');
+  await page.waitForFunction(() => window.kizomba.ready, null, { timeout: 120000 });
+  await page.waitForTimeout(15000);
+  await page.screenshot({ path: join(out, 'practice-session.png') });
+  const log = await page.evaluate(() => window.kizomba.log);
+  await browser.close();
+  results.practice = { judgements: log.length, bpm: log.at(-1)?.bpm, errors };
+  console.log('practice', results.practice);
 }
 
 const cases = [
@@ -102,7 +147,8 @@ try {
     if (!existsSync(join(media, file))) { console.log(`skip ${name}: ${file} missing (run test/e2e/fetch-media.sh)`); continue; }
     await analyseVideo(name, file);
   }
-  if ((!only || only === 'live') && existsSync(join(media, 'live_cam.y4m'))) await liveSimulation();
+  if ((!only || only === 'live') && existsSync(join(media, 'live.webm'))) await liveSimulation();
+  if ((!only || only === 'practice') && existsSync(join(media, 'live.webm'))) await practiceSimulation();
 } finally {
   server.kill();
 }
@@ -119,6 +165,10 @@ for (const base of ['workout', 'ginga']) {
 if (results.live) {
   check(results.live.up + results.live.down > 10, `live: judged ${results.live.up + results.live.down} beats from fake camera + microphone`);
   check(Math.abs(results.live.bpm - 92) < 3, `live: detected ${results.live.bpm} BPM from the microphone (expected ≈ 92)`);
+}
+if (results.practice) {
+  check(results.practice.judgements > 10 && results.practice.bpm === 96 && !results.practice.errors.length,
+    `practice groove: ${results.practice.judgements} judgements at ${results.practice.bpm} BPM, ${results.practice.errors.length} page errors`);
 }
 writeFileSync(join(out, 'results.json'), JSON.stringify(results, null, 2));
 process.exit(failed ? 1 : 0);

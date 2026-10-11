@@ -2,7 +2,7 @@
 # Downloads the public YouTube clips used by the end-to-end simulation and prepares test media:
 #  - WebM copies (Playwright's Chromium has no H.264/AAC decoders)
 #  - "halfshift" controls whose soundtrack is delayed by exactly half a beat
-#  - a raw .y4m + .wav pair used as fake webcam + fake microphone
+#  - a clip used as fake webcam + fake microphone for the live-mode test
 # Needs yt-dlp and ffmpeg. Files land in test/fixtures/media (git-ignored).
 set -euo pipefail
 cd "$(dirname "$0")/../fixtures/media" 2>/dev/null || { mkdir -p "$(dirname "$0")/../fixtures/media"; cd "$(dirname "$0")/../fixtures/media"; }
@@ -14,8 +14,7 @@ webm() { ffmpeg -v error -y "$@" -c:v libvpx-vp9 -b:v 1200k -deadline realtime -
 get IRk21M-HXoo
 webm -ss 18 -to 220 -i IRk21M-HXoo.mp4 -vf scale=-2:540 workout.webm
 ffmpeg -v error -y -i workout.webm -c:v copy -af "adelay=326.1:all=1" -c:a libopus -b:a 128k -shortest workout_halfshift.webm   # ½ beat @ 92.0 BPM
-ffmpeg -v error -y -ss 30 -t 45 -i IRk21M-HXoo.mp4 -vf "scale=480:270,fps=30" -pix_fmt yuv420p live_cam.y4m
-ffmpeg -v error -y -ss 30 -t 45 -i IRk21M-HXoo.mp4 -vn -ac 2 -ar 48000 live_mic.wav
+webm -ss 30 -t 60 -i IRk21M-HXoo.mp4 -vf scale=-2:540 live.webm   # fed in as fake webcam + microphone
 
 # "Kizomba Ladies Ginga by Eliza Sala and Iolanda Rangel" – two dancers, 96 BPM
 get GNEXZ46EDSk
