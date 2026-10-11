@@ -52,6 +52,14 @@ npm start
 `vendor/` is plain static files, so the whole folder can be served by any static web server over
 HTTPS.
 
+### GitHub Pages
+
+`.github/workflows/pages.yml` deploys the app on every push to `main`: it runs `npm ci` (which
+vendors MediaPipe and downloads the models), runs the unit tests, and publishes `index.html`,
+`css/`, `src/`, `vendor/` and the icons. In the repository settings set **Pages → Source:
+GitHub Actions**. The site is served over HTTPS, so phones can use the camera without
+certificate warnings.
+
 ### Tips
 
 - Whole body in view (head to feet), 2–3 m from the camera, decent light.
