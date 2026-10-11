@@ -6,46 +6,81 @@
 // ---------- Audio ----------
 
 // Streaming clap detector. push(samples) returns stream sample indices of clap onsets.
+// A clap must be (1) well above the background, (2) loud in absolute terms, so rustling in a
+// silent room doesn't count, and (3) bright: much of its energy above ~2 kHz, which footsteps,
+// thuds and knocks don't have. Laptop and webcam mics dull claps, so a less bright sound still
+// counts if it rises very sharply above the background (speech and footsteps don't).
 export class ClapListener {
-  constructor(sampleRate, { hopSec = 0.004, riseDb = 12, minGapSec = 0.25 } = {}) {
+  constructor(sampleRate, {
+    hopSec = 0.004, riseDb = 12, minDb = -45, minBrightShare = 0.3,
+    sharpRiseDb = 25, minSharpBrightShare = 0.08, cutoffHz = 2000, minGapSec = 0.25,
+  } = {}) {
     this.sr = sampleRate;
     this.hop = Math.max(1, Math.round(sampleRate * hopSec));
     this.rise = 10 ** (riseDb / 10);
+    this.sharpRise = 10 ** (sharpRiseDb / 10);
+    this.minEnergy = 10 ** (minDb / 10); // mean square of the high-passed signal over one hop
+    this.minBrightShare = minBrightShare;
+    this.minSharpBrightShare = minSharpBrightShare;
     this.minGap = Math.round(minGapSec * sampleRate);
-    this.prevSample = 0;
+    // 2nd-order Butterworth high-pass (RBJ cookbook).
+    const w = (2 * Math.PI * cutoffHz) / sampleRate, alpha = Math.sin(w) / Math.SQRT2, a0 = 1 + alpha;
+    this.b = [(1 + Math.cos(w)) / 2 / a0, -(1 + Math.cos(w)) / a0, (1 + Math.cos(w)) / 2 / a0];
+    this.a = [(-2 * Math.cos(w)) / a0, (1 - alpha) / a0];
+    this.x1 = this.x2 = this.y1 = this.y2 = 0;
     this.acc = 0;
+    this.accRaw = 0;
     this.inHop = 0;
     this.total = 0;
     this.floor = null; // slow-moving background energy per hop
     this.lastClap = -Infinity;
     // Recent high-passed samples, for refining the onset to the sample.
     this.ring = new Float32Array(Math.round(sampleRate * 0.1));
-    this.pending = null; // detection waiting for a few more samples to refine
+    this.pending = null; // candidate clap waiting for the rest of its burst
   }
 
   push(samples) {
     const out = [];
     const { ring } = this;
     for (let i = 0; i < samples.length; i++) {
-      // First difference = simple high-pass: claps are bright, room hum and bass are not.
-      const x = samples[i] - this.prevSample;
-      this.prevSample = samples[i];
+      const s = samples[i], { b, a } = this;
+      const x = b[0] * s + b[1] * this.x1 + b[2] * this.x2 - a[0] * this.y1 - a[1] * this.y2;
+      this.x2 = this.x1;
+      this.x1 = s;
+      this.y2 = this.y1;
+      this.y1 = x;
       ring[this.total % ring.length] = x;
       this.total++;
       this.acc += x * x;
+      this.accRaw += s * s;
       if (++this.inHop < this.hop) continue;
       const e = this.acc / this.hop + 1e-12;
+      const hp = this.acc, raw = this.accRaw;
+      const { pending } = this;
+      if (pending) {
+        pending.hp += hp;
+        pending.raw += raw;
+        pending.peak = Math.max(pending.peak, e);
+      }
       this.acc = 0;
+      this.accRaw = 0;
       this.inHop = 0;
-      if (this.pending && this.total >= this.pending.until) {
-        out.push(this._refine(this.pending.from, this.total));
+      if (pending && this.total >= pending.until) {
+        // Judge brightness over the whole burst: a thud starts with a short bright click too.
+        const bright = pending.hp / (pending.raw + 1e-12);
+        if (bright > this.minBrightShare || (bright > this.minSharpBrightShare && pending.peak > pending.floor * this.sharpRise)) {
+          this.lastClap = pending.at;
+          out.push(this._refine(pending.from, this.total));
+        }
         this.pending = null;
       }
       if (this.floor == null) this.floor = e;
-      const isClap = e > this.floor * this.rise && this.total - this.lastClap > this.minGap;
-      if (isClap && !this.pending) {
-        this.lastClap = this.total;
-        this.pending = { from: this.total - 2 * this.hop, until: this.total + Math.round(0.02 * this.sr) };
+      const isCandidate = e > this.floor * this.rise && e > this.minEnergy && this.total - this.lastClap > this.minGap;
+      if (isCandidate && !this.pending) {
+        this.pending = {
+          at: this.total, from: this.total - 2 * this.hop, until: this.total + Math.round(0.02 * this.sr),
+          floor: this.floor, peak: e, hp, raw,
+        };
       }
       // The floor follows quiet stretches quickly and loud ones slowly, so claps don't raise it much.
       const k = e > this.floor ? 0.01 : 0.2;
