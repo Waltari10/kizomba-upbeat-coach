@@ -1,0 +1,10 @@
+{
+  "name": "Kizomba Upbeat Coach",
+  "short_name": "Kiz Coach",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#14101c",
+  "theme_color": "#14101c",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
