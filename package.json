@@ -9,7 +9,8 @@
     "setup": "node scripts/setup.mjs",
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
-    "e2e": "node test/e2e/run-e2e.mjs"
+    "e2e": "node test/e2e/run-e2e.mjs",
+    "e2e:ui": "node test/e2e/ui-stress.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.35"

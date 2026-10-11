@@ -21,3 +21,9 @@ get GNEXZ46EDSk
 webm -ss 25 -i GNEXZ46EDSk.mp4 ginga_music.webm
 ffmpeg -v error -y -i ginga_music.webm -c:v copy -af "adelay=312.2:all=1" -c:a libopus -b:a 128k -shortest ginga_halfshift.webm  # ½ beat @ 96.1 BPM
 ls -la
+
+# Extra clips for the replay / tempo benchmarks (test/e2e/replay.mjs, tempo-bench.mjs)
+for id in AYqcApcDXvk cmHPSJAm5uQ mJoPUrwMVmU xmfH0Ykkuv8 u8CVeE_uXzQ; do
+  get "$id"
+  [ -f "$id.webm" ] || webm -i "$id.mp4" -vf scale=-2:540 "$id.webm"
+done

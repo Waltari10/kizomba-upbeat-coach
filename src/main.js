@@ -1,9 +1,9 @@
-import { createPoseDetector, SKELETON } from './pose.js';
+import { createPoseDetector, DancerTracker, SKELETON } from './pose.js';
 import { BounceAnalyzer, HeightNormalizer, hipHeight } from './core/bounce.js';
 import { BeatTracker } from './core/beatTracker.js';
 import { MicBeatSource } from './audio/micBeat.js';
 import { PracticeBeat } from './audio/practiceBeat.js';
-import { analyseFile } from './audio/fileBeat.js';
+import { analyseFile, SongBeat } from './audio/fileBeat.js';
 import { AudioFeedback } from './ui/feedback.js';
 
 const $ = (s) => document.querySelector(s);
@@ -53,7 +53,7 @@ const app = (window.kizomba = {
   poseLog: [],
 });
 
-let ctx, pose, beatSource, fileBeat, feedback, analyzer, normalizer, wakeLock;
+let ctx, pose, beatSource, fileBeat, feedback, analyzer, normalizer, dancer, wakeLock;
 let running = false;
 let lastJudgedBeat = null;
 let current = { status: 'loading' };
@@ -93,6 +93,10 @@ function bindSetup() {
       $('#setup-error').textContent = 'Choose a video file first.';
       return;
     }
+    if (settings.source === 'song' && !$('#song').files[0]) {
+      $('#setup-error').textContent = 'Choose a song first.';
+      return;
+    }
     start().catch((err) => {
       console.error(err);
       stop(false);
@@ -105,7 +109,7 @@ function bindSetup() {
 function friendlyError(err) {
   if (err?.name === 'NotAllowedError') return 'Camera/microphone permission was denied. Allow access in the browser settings and try again.';
   if (err?.name === 'NotFoundError') return 'No camera or microphone was found.';
-  if (err?.name === 'EncodingError') return 'This browser cannot decode the sound of that video. Try Chrome/Safari, or export it as MP4 (H.264/AAC) or WebM.';
+  if (err?.name === 'EncodingError') return 'This browser cannot decode the sound of that file. Try Chrome/Safari, or export it as MP4 (H.264/AAC) or WebM.';
   if (!window.isSecureContext) return 'The camera only works on https:// or http://localhost. Open the https address printed by the server.';
   return `Could not start: ${err?.message || err}`;
 }
@@ -126,6 +130,7 @@ async function start() {
   applyFeedbackSettings();
   analyzer = new BounceAnalyzer();
   normalizer = new HeightNormalizer();
+  dancer = new DancerTracker();
   applySensitivity();
   app.log = [];
   app.stats = { up: 0, down: 0, still: 0, irregular: 0, halftime: 0 };
@@ -133,7 +138,8 @@ async function start() {
   streak = { status: null, n: 0 };
   document.body.dataset.mirror = settings.source !== 'file' && settings.facing === 'user' ? '1' : '0';
 
-  const posePromise = createPoseDetector(settings.quality);
+  // ?cpu=1 forces the slower CPU pose model (for testing the fallback path).
+  const posePromise = createPoseDetector(settings.quality, { forceCpu: new URLSearchParams(location.search).has('cpu') });
 
   if (settings.source === 'file') {
     const file = $('#file').files[0];
@@ -154,6 +160,10 @@ async function start() {
     });
     if (settings.source === 'practice') {
       beatSource = new PracticeBeat(ctx, settings.bpm);
+    } else if (settings.source === 'song') {
+      $('#status-sub').textContent = 'Analysing the song…';
+      beatSource = new SongBeat(ctx, await analyseFile(ctx, $('#song').files[0], (msg) => ($('#status-sub').textContent = msg)));
+      beatSource.onended = () => stop(true);
     } else {
       beatSource = new MicBeatSource(ctx);
       await beatSource.start();
@@ -163,7 +173,7 @@ async function start() {
     video.controls = false;
     await video.play();
     pose = await posePromise;
-    if (settings.source === 'practice') beatSource.start();
+    if (settings.source === 'practice' || settings.source === 'song') beatSource.start();
   }
 
   try {
@@ -171,6 +181,7 @@ async function start() {
   } catch {}
   running = true;
   app.ready = true;
+  app.perf = { frames: 0, detectMs: 0, delegate: pose.delegate };
   startedAt = performance.now();
   scheduleFrame();
   requestAnimationFrame(render);
@@ -232,7 +243,14 @@ function processFrame(now, meta) {
     lastJudgedBeat = null;
   }
   const d0 = performance.now();
-  const landmarks = pose.detect(video, fileBeat ? t * 1000 : now);
+  // MediaPipe smooths landmarks over time, so it always gets wall-clock timestamps: media time
+  // jumps backwards on a seek, which would make its filter think frames are 1 ms apart.
+  const { landmarks, switched } = dancer.pick(pose.detect(video, now));
+  if (switched) {
+    // A different person was picked up: their hip height is not comparable.
+    analyzer.reset();
+    normalizer.reset();
+  }
   app.perf.frames++;
   app.perf.detectMs += (performance.now() - d0 - app.perf.detectMs) * 0.05;
   latest = { t, landmarks, sampleT };

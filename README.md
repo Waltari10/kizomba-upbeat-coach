@@ -33,6 +33,7 @@ separately. If that's all you do, the app says "Every 2nd beat" instead of guess
 | Source | How the beat is found |
 | --- | --- |
 | **Music playing in the room** (default) | The microphone listens; a spectral-flux onset detector (bass-weighted, because the kick/bass carries the Kizomba beat while hi-hats sit on the "and") feeds an autocorrelation tempo estimator and a comb-filter phase tracker with a phase-locked loop. |
+| **Play a song from this device** | Pick a music file; the app analyses its beat up front (with look-ahead) and plays it itself. The beat timing is exact and room noise can't interfere, so this is the most reliable mode in a noisy room. |
 | **Built-in practice groove** | The app synthesises a simple Kizomba/ghetto-zouk groove (70–120 BPM), so the beat is known exactly. |
 | **Analyse a video** | Pick a recording (of yourself or anyone). The soundtrack is analysed up front and the video is judged as it plays. |
 
@@ -54,10 +55,26 @@ HTTPS.
 ### Tips
 
 - Whole body in view (head to feet), 2–3 m from the camera, decent light.
-- Play the music from a speaker, not headphones, so the microphone can hear it.
+- Play the music from a speaker, not headphones, so the microphone can hear it. In a noisy room
+  (people talking, fans, AC) use **Play a song from this device** instead.
+- It is built for solo practice. With a partner in close embrace, the tracker can jump between
+  the two bodies, and verdicts are less reliable.
 - Watch the four beat dots: they should flash on the main beat (the bass/kick). If the song fools
   the tracker into following the off-beat, tick **Settings → shift by half a beat**.
 - If the camera lags the music on your device, adjust **Settings → Sync offset**.
+
+## Limitations (measured)
+
+- **Microphone mode needs the music clearly louder than steady background noise.** With pink
+  noise 23 dB below the music, the correct beat was found 17–98% of the time depending on the
+  song; at 11 dB below, mostly not at all. The app then shows "Listening for the beat…" rather
+  than judging against a wrong beat. A phone-speaker sound (no bass below ~350 Hz), echo and
+  quiet playback were handled well.
+- **"Is there a beat?" isn't perfect.** Pink noise is mistaken for music about 6% of the time, and
+  synthetic speech about 23% (computer speech has a very regular rhythm). A false beat only
+  produces verdicts if you're also bouncing rhythmically.
+- **Couples:** see the tip above. On two couple demo videos the dancers' timing relative to the
+  beat was inconsistent, so verdicts were close to 50/50.
 
 ## Tests
 
@@ -65,7 +82,8 @@ HTTPS.
 npm test                     # unit tests: onset detection, beat tracking, bounce analysis
 bash test/e2e/fetch-media.sh # downloads public Kizomba videos from YouTube (needs yt-dlp + ffmpeg)
 npx playwright install chromium
-npm run e2e                  # end-to-end simulation in headless Chromium
+npm run e2e                  # end-to-end simulation in headless Chromium (~12 min, real time)
+npm run e2e:ui               # UI robustness: seeking, settings, restarts, song mode, CPU fallback
 ```
 
 The end-to-end simulation (`test/e2e/run-e2e.mjs`):
@@ -78,8 +96,20 @@ The end-to-end simulation (`test/e2e/run-e2e.mjs`):
    pose → judging → feedback.
 3. Runs the **built-in practice groove** with the voice coach and beat tick on.
 
-`test/e2e/record-pose.mjs` + `test/e2e/replay.mjs` record raw landmarks once and replay them
-through the analysis code offline, for fast tuning.
+`test/e2e/ui-stress.mjs` checks that:
+
+- seeking keeps judging;
+- the half-beat toggle moves the measured high point by exactly ½ beat, and the sync slider by
+  offset ÷ beat length;
+- repeated start/stop cycles and reloads keep working and settings persist;
+- song mode locks to the song's tempo;
+- the CPU-only pose fallback still runs in real time.
+
+Tools for tuning:
+
+- `test/e2e/record-pose.mjs` + `test/e2e/replay.mjs`: record raw landmarks once, then replay them
+  through the analysis code offline (with an optional half-beat audio delay for the flip test).
+- `test/e2e/tempo-bench.mjs`: tempo/beat-lock benchmark over real soundtracks.
 
 ## Project layout
 

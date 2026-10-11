@@ -1,7 +1,7 @@
 // Listens to music through the microphone and keeps a live beat grid on the
 // performance.now() clock (seconds).
 import { OnsetDetector } from '../core/onset.js';
-import { BeatTracker } from '../core/beatTracker.js';
+import { BeatTracker, isLocked } from '../core/beatTracker.js';
 import { ctxToPerf } from './clock.js';
 
 const ASSUMED_INPUT_LATENCY = 0.012;
@@ -63,9 +63,7 @@ export class MicBeatSource {
   }
 
   getGrid() {
-    if (!this.grid) return null;
-    // Below this the music is too quiet / not rhythmic enough to trust.
-    return this.grid.confidence > 0.12 ? this.grid : null;
+    return isLocked(this.grid) ? this.grid : null;
   }
 
   stop() {

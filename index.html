@@ -38,6 +38,11 @@
             <legend>Music</legend>
             <label class="opt"><input type="radio" name="source" value="mic" checked />
               <span><b>Music playing in the room</b><small>Uses the microphone to find the beat of any song</small></span></label>
+            <label class="opt"><input type="radio" name="source" value="song" />
+              <span><b>Play a song from this device</b><small>The app plays your music file itself, so the beat is exact even in a noisy room</small></span></label>
+            <div class="sub only-song">
+              <input id="song" type="file" accept="audio/*,video/*" />
+            </div>
             <label class="opt"><input type="radio" name="source" value="practice" />
               <span><b>Built-in practice groove</b><small>A simple Kizomba beat played by the app</small></span></label>
             <div class="sub only-practice">

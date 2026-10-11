@@ -12,9 +12,13 @@ export class BeatTracker {
     minBpm = 60,
     maxBpm = 150,
     preferBpm = 92,
-    preferOctaves = 0.6,
+    preferOctaves = 0.4,
+    // Weights of the autocorrelation at 2 and 4 beats (half bar / bar). The true beat repeats at
+    // the bar level, while the 3-3-2 Kizomba rhythm makes a strong but misleading peak at ¾ beat.
+    w2 = 0.5,
+    w4 = 0.5,
   } = {}) {
-    Object.assign(this, { hopSec, windowSec, minBpm, maxBpm, preferBpm, preferOctaves });
+    Object.assign(this, { hopSec, windowSec, minBpm, maxBpm, preferBpm, preferOctaves, w2, w4 });
     this.cap = Math.round(windowSec / hopSec);
     this.times = [];
     this.values = [];
@@ -22,9 +26,13 @@ export class BeatTracker {
     this._pendingPeriod = null;
     this._pendingCount = 0;
     this._phaseJumpCount = 0;
+    this._stable = 0; // how many of the last 12 updates agreed with the running grid
+    this._agree = [];
   }
 
   reset() {
+    this._stable = 0;
+    this._agree = [];
     this.times = [];
     this.values = [];
     this.grid = null;
@@ -89,14 +97,18 @@ export class BeatTracker {
     };
     const ac0 = ac(0);
     if (ac0 <= 1e-12) return this.grid;
-    const acv = new Float32Array(2 * maxLag + 2);
-    for (let l = Math.max(1, minLag - 1); l <= Math.min(2 * maxLag + 1, N - 1); l++) acv[l] = ac(l);
+    const acv = new Float32Array(4 * maxLag + 2);
+    const acAt = (l) => {
+      if (l >= N - 1) return 0;
+      if (!acv[l]) acv[l] = ac(l) || 1e-30;
+      return acv[l];
+    };
     let best = -1, bestScore = -Infinity;
     const score = new Float32Array(maxLag + 2);
     for (let l = minLag; l <= maxLag; l++) {
       const bpm = (60 * fps) / l;
       const prior = Math.exp(-0.5 * (Math.log2(bpm / this.preferBpm) / this.preferOctaves) ** 2);
-      const s = (acv[l] + 0.5 * (acv[2 * l] || 0)) * prior;
+      const s = (acAt(l) + this.w2 * acAt(2 * l) + this.w4 * acAt(4 * l)) * prior;
       score[l] = s;
       if (s > bestScore) { bestScore = s; best = l; }
     }
@@ -107,8 +119,14 @@ export class BeatTracker {
       const den = a - 2 * b + c;
       if (den < 0) lag = best + (0.5 * (a - c)) / den;
     }
-    const confidence = Math.max(0, Math.min(1, acv[best] / ac0));
+    const confidence = Math.max(0, Math.min(1, acAt(best) / ac0));
+    // How much the chosen tempo stands out from the other candidate tempos.
+    let acMean = 0;
+    for (let l = minLag; l <= maxLag; l++) acMean += acAt(l);
+    acMean /= maxLag - minLag + 1;
+    const tempoContrast = (acAt(best) - acMean) / ac0;
     let period = lag * this.hopSec;
+    const tempoAgrees = !!this.grid && Math.abs(period / this.grid.period - 1) < 0.04;
 
     // Tempo hysteresis: small changes are smoothed, big jumps must persist.
     if (this.grid) {
@@ -135,7 +153,7 @@ export class BeatTracker {
         if (pos < 2) break;
         const i = Math.round(pos);
         const w = Math.exp(-k / 6);
-        s += w * (env[i] + 0.5 * (env[i - 1] + env[i + 1]) + 0.25 * (env[i - 2] + (env[i + 2] || 0)));
+        s += w * (env[i] + 0.5 * (env[i - 1] + (env[i + 1] || 0)) + 0.25 * (env[i - 2] + (env[i + 2] || 0)));
       }
       if (s > bestComb) { bestComb = s; bestPhase = ph; }
     }
@@ -147,6 +165,11 @@ export class BeatTracker {
       const k = Math.round((anchor - prev.anchor) / prev.period);
       const predicted = prev.anchor + k * prev.period;
       let err = anchor - predicted;
+      // Track how many of the last 12 updates agreed with the running grid on both tempo and beat
+      // position. Music does this update after update; speech and noise do not.
+      this._agree.push(tempoAgrees && Math.abs(err) < 0.1 * period ? 1 : 0);
+      if (this._agree.length > 12) this._agree.shift();
+      this._stable = this._agree.reduce((a, b) => a + b, 0);
       const big = Math.abs(err) > 0.2 * period;
       if (big) this._phaseJumpCount++;
       else this._phaseJumpCount = 0;
@@ -158,7 +181,7 @@ export class BeatTracker {
       }
     }
 
-    this.grid = { period, anchor, bpm: 60 / period, confidence, t: times[N - 1] };
+    this.grid = { period, anchor, bpm: 60 / period, confidence, tempoContrast, stable: this._stable, t: times[N - 1] };
     return this.grid;
   }
 }
@@ -180,6 +203,14 @@ export function precomputeGrids(frames, hopSec, { stepSec = 0.25, lookAheadSec =
     if (g) grids.push({ ...g, at: t });
   }
   return grids;
+}
+
+// Is this grid trustworthy enough to judge dancing against? Most of the recent updates must
+// agree on tempo and beat position, and the tempo must stand out from other candidates.
+// Tuned on real Kizomba recordings vs. speech and noise (see test/e2e/tempo-bench.mjs).
+export const LOCK = { minStable: 7, minConfidence: 0.04, minContrast: 0.08 };
+export function isLocked(grid) {
+  return !!grid && grid.stable >= LOCK.minStable && grid.confidence > LOCK.minConfidence && grid.tempoContrast > LOCK.minContrast;
 }
 
 export function gridAt(grids, t) {

@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { onsetEnvelope, OnsetDetector } from '../src/core/onset.js';
-import { BeatTracker, precomputeGrids, gridAt } from '../src/core/beatTracker.js';
+import { BeatTracker, precomputeGrids, gridAt, isLocked } from '../src/core/beatTracker.js';
 import { BounceAnalyzer } from '../src/core/bounce.js';
-import { synthKizomba, wrapBeats } from './helpers.mjs';
+import { synthKizomba, synthRandomOnsets, wrapBeats } from './helpers.mjs';
 
 for (const bpm of [80, 90, 100, 120]) {
   test(`beat tracker locks tempo and phase on a synthetic ${bpm} BPM kizomba loop`, () => {
@@ -99,4 +99,25 @@ test('a per-beat lift on top of a two-beat sway is still judged', () => {
   const r = a.analyze(9.9, grid);
   assert.equal(r.status, 'up');
   assert.ok(Math.abs(r.offset) < 0.05);
+});
+
+test('a real groove locks; random onsets (speech-like) do not', () => {
+  const lockedShare = ({ samples, sr }) => {
+    const { frames, hopSec } = onsetEnvelope(samples, sr);
+    const grids = precomputeGrids(frames, hopSec, { lookAheadSec: 0 });
+    let n = 0, ok = 0;
+    for (let t = 6; t < 20; t += 0.5) { n++; if (isLocked(gridAt(grids, t))) ok++; }
+    return ok / n;
+  };
+  assert.ok(lockedShare(synthKizomba({ bpm: 92 })) > 0.9);
+  assert.ok(lockedShare(synthRandomOnsets()) < 0.2);
+});
+
+test('a groove dominated by a loud 3-3-2 rim pattern keeps the true tempo and phase', () => {
+  const { samples, sr, beats, period } = synthKizomba({ bpm: 87, kickGain: 0.35, rimGain: 0.9, hatGain: 0.3, seconds: 24 });
+  const { frames, hopSec } = onsetEnvelope(samples, sr);
+  const grids = precomputeGrids(frames, hopSec);
+  const g = gridAt(grids, 20);
+  assert.ok(Math.abs(g.bpm / 87 - 1) < 0.03, `bpm ${g.bpm}`);
+  assert.ok(Math.abs(wrapBeats((g.anchor - beats[0]) / period)) < 0.08);
 });

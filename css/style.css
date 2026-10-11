@@ -49,8 +49,8 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; co
 .opt small { color: var(--muted); }
 .sub { padding: 2px 14px 12px 40px; }
 .sub input[type=range] { width: 100%; accent-color: var(--accent); }
-.only-practice, .only-file { display: none; }
-body[data-source="practice"] .only-practice, body[data-source="file"] .only-file { display: block; }
+.only-practice, .only-file, .only-song { display: none; }
+body[data-source="practice"] .only-practice, body[data-source="file"] .only-file, body[data-source="song"] .only-song { display: block; }
 body[data-source="file"] .hide-file { display: none; }
 .seg { display: flex; background: var(--card-2); border-radius: 12px; padding: 4px; gap: 4px; margin: 6px 0; }
 .seg label { flex: 1; }
