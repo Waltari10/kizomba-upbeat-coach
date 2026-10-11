@@ -1,0 +1,6 @@
+node_modules/
+vendor/
+.cert/
+test/fixtures/media/
+test/e2e/out/
+.DS_Store
