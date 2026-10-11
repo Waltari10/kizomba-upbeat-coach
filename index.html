@@ -147,9 +147,10 @@
           <label class="check"><input id="d-click" type="checkbox" /> Tick on every beat</label>
           <label>Sensitivity (smaller bounces count)
             <input id="d-sens" type="range" min="0.5" max="3" step="0.1" /></label>
-          <label>Sync offset <output id="d-offset-out">0</output> ms
+          <p class="hint" id="d-auto"></p>
+          <label>Fine-tune sync <output id="d-offset-out">0</output> ms
             <input id="d-offset" type="range" min="-250" max="250" step="10" /></label>
-          <p class="hint">Increase if your camera lags behind the music (the green beat lines appear before your movement).</p>
+          <p class="hint">Delay is corrected automatically. Increase this only if your movement still shows up later than it happens (the green beat lines come before your peaks when you know you're on the beat).</p>
           <label class="check"><input id="d-half" type="checkbox" /> Beat detected on the “and” – shift it by half a beat</label>
           <p class="hint">Watch the pulsing dots: they should flash on the main beat (the bass / kick) of the song.</p>
         </div>

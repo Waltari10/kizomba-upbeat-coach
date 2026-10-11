@@ -3,8 +3,8 @@
 import { OnsetDetector } from '../core/onset.js';
 import { BeatTracker, isLocked } from '../core/beatTracker.js';
 import { ctxToPerf } from './clock.js';
+import { micInputDelay } from '../core/latency.js';
 
-const ASSUMED_INPUT_LATENCY = 0.012;
 
 const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
@@ -20,6 +20,7 @@ export class MicBeatSource {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
+    this.inputDelay = micInputDelay(this.stream.getAudioTracks()[0]);
     const src = this.ctx.createMediaStreamSource(this.stream);
     this.detector = new OnsetDetector(this.ctx.sampleRate);
     this.tracker = new BeatTracker({ hopSec: this.detector.hopSec });
@@ -55,7 +56,9 @@ export class MicBeatSource {
     this.level = Math.max(peak, this.level * 0.9);
     if (this.firstFrame == null) this.firstFrame = startFrame;
     const sr = this.ctx.sampleRate;
-    const latency = (this.ctx.outputLatency || this.ctx.baseLatency || 0) + ASSUMED_INPUT_LATENCY;
+    // Audio is processed about outputLatency ahead of the context's output clock, and was
+    // recorded inputDelay before it was processed.
+    const latency = (this.ctx.outputLatency || this.ctx.baseLatency || 0) + this.inputDelay.delay;
     for (const f of this.detector.push(samples)) {
       const ctxTime = (this.firstFrame + f.sample) / sr;
       this.tracker.addFrame(ctxToPerf(this.ctx, ctxTime) - latency, f.value);

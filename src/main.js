@@ -5,6 +5,7 @@ import { MicBeatSource } from './audio/micBeat.js';
 import { PracticeBeat } from './audio/practiceBeat.js';
 import { analyseFile, SongBeat } from './audio/fileBeat.js';
 import { AudioFeedback } from './ui/feedback.js';
+import { cameraFrameTime } from './core/latency.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -233,9 +234,13 @@ function onFrame(now, meta) {
 }
 
 function processFrame(now, meta) {
-  const t = fileBeat
-    ? meta?.mediaTime ?? video.currentTime
-    : (meta?.captureTime ?? meta?.presentationTime ?? now) / 1000;
+  let t;
+  if (fileBeat) t = meta?.mediaTime ?? video.currentTime;
+  else {
+    const cam = cameraFrameTime(meta, now);
+    t = cam.t;
+    app.perf.camera = cam;
+  }
   const sampleT = t - settings.offsetMs / 1000;
   if (latest.t != null && t < latest.t - 0.3) {
     // Seeked backwards in a file.
@@ -460,6 +465,18 @@ function drawTrace(grid) {
   tctx.stroke();
 }
 
+function autoCorrectionText() {
+  if (fileBeat) return 'Video mode: sound and picture come from the same file, so no delay correction is needed.';
+  const cam = app.perf.camera;
+  const camText = !cam ? 'camera: waiting for frames'
+    : cam.source === 'timestamp' ? 'camera: exact (the browser timestamps each frame)'
+    : `camera: −${Math.round(cam.correction * 1000)} ms (estimated)`;
+  const mic = beatSource?.inputDelay;
+  const micText = mic ? `microphone: −${Math.round(mic.delay * 1000)} ms (${mic.source === 'reported' ? 'reported by the browser' : 'estimated'})`
+    : 'microphone: not used (the app plays the music itself)';
+  return `Automatic delay correction: ${camText}; ${micText}.`;
+}
+
 // ---------- Settings drawer ----------
 function bindDrawer() {
   const open = () => {
@@ -471,6 +488,7 @@ function bindDrawer() {
     $('#d-offset-out').textContent = settings.offsetMs;
     $('#d-sens').value = settings.sensitivity;
     $('#d-half').checked = settings.halfShift;
+    $('#d-auto').textContent = autoCorrectionText();
   };
   $('#btn-settings').onclick = open;
   $('#btn-close-drawer').onclick = () => ($('#drawer').hidden = true);

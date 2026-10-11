@@ -63,6 +63,27 @@ HTTPS.
   the tracker into following the off-beat, tick **Settings → shift by half a beat**.
 - If the camera lags the music on your device, adjust **Settings → Sync offset**.
 
+## Delay correction (live mode)
+
+Camera and microphone each have their own delay, and they push in opposite directions, so each is
+corrected where it happens (`src/core/latency.js`):
+
+- **Camera:** if the browser timestamps each frame at capture (`requestVideoFrameCallback`
+  `captureTime`, usually available in Chrome), that exact time is used. Otherwise the frame's
+  display time minus a conservative **60 ms** default is used (camera pipelines are typically
+  40–100 ms).
+- **Microphone:** the input delay the browser reports (Chrome), otherwise a **25 ms** default.
+  Only the input delay matters, because you and the microphone hear the speaker at the same
+  moment.
+- **Settings → Fine-tune sync** adds a manual offset on top. The drawer shows which corrections
+  are active.
+
+At 90 BPM the app accepts your high point within ±167 ms of the beat (±¼ beat). In the simulated
+live test, the timing matches video mode (which has no device delay) to within about 25 ms once
+the applied correction is accounted for. That test can't check the 60 ms camera estimate
+itself, because the simulated camera has no real pipeline delay. It hasn't been measured on a
+real phone or webcam yet.
+
 ## Limitations (measured)
 
 - **Microphone mode needs the music clearly louder than steady background noise.** With pink

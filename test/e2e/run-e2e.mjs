@@ -102,13 +102,18 @@ async function liveSimulation() {
   await page.click('#btn-settings');
   await page.screenshot({ path: join(out, 'live-settings.png') });
   await page.click('#btn-close-drawer');
-  const { stats, log } = await page.evaluate(() => ({ stats: window.kizomba.stats, log: window.kizomba.log }));
+  const { stats, log, camera, auto } = await page.evaluate(() => ({ stats: window.kizomba.stats, log: window.kizomba.log, camera: window.kizomba.perf.camera, auto: document.querySelector('#d-auto').textContent }));
   await page.click('#btn-stop');
   await page.screenshot({ path: join(out, 'live-summary.png') });
   await browser.close();
   writeFileSync(join(out, 'live-log.json'), JSON.stringify(log, null, 1));
   const bpms = log.filter((l) => l.bpm).map((l) => l.bpm);
-  results.live = { ...summarise(stats), judgements: log.length, bpm: bpms.length ? +bpms[bpms.length - 1].toFixed(1) : null };
+  const offs = log.filter((l) => l.status === 'up' || l.status === 'down').map((l) => l.offset);
+  const v = offs.reduce((a, o) => [a[0] + Math.cos(2 * Math.PI * o), a[1] + Math.sin(2 * Math.PI * o)], [0, 0]);
+  results.live = {
+    ...summarise(stats), judgements: log.length, bpm: bpms.length ? +bpms[bpms.length - 1].toFixed(1) : null,
+    meanPeakOffsetBeats: +(Math.atan2(v[1], v[0]) / (2 * Math.PI)).toFixed(3), cameraTime: camera?.source, cameraCorrection: camera?.correction, auto,
+  };
   console.log('live', results.live);
 }
 
@@ -147,7 +152,10 @@ try {
     if (!existsSync(join(media, file))) { console.log(`skip ${name}: ${file} missing (run test/e2e/fetch-media.sh)`); continue; }
     await analyseVideo(name, file);
   }
-  if ((!only || only === 'live') && existsSync(join(media, 'live.webm'))) await liveSimulation();
+  if ((!only || only === 'live') && existsSync(join(media, 'live.webm'))) {
+    await liveSimulation();
+    await analyseVideo('live-reference', 'live.webm'); // same clip in video mode = ground truth timing
+  }
   if ((!only || only === 'practice') && existsSync(join(media, 'live.webm'))) await practiceSimulation();
 } finally {
   server.kill();
@@ -165,6 +173,15 @@ for (const base of ['workout', 'ginga']) {
 if (results.live) {
   check(results.live.up + results.live.down > 10, `live: judged ${results.live.up + results.live.down} beats from fake camera + microphone`);
   check(Math.abs(results.live.bpm - 92) < 3, `live: detected ${results.live.bpm} BPM from the microphone (expected ≈ 92)`);
+  const ref = results['live-reference'];
+  if (ref) {
+    // The fake camera and microphone come from one video element, so their true offset is zero
+    // and live mode must reproduce the video-mode timing, minus the camera correction it applied
+    // (the fake camera has no real pipeline delay to correct).
+    const expected = ref.meanPeakOffsetBeats - (results.live.cameraCorrection * results.live.bpm) / 60;
+    const err = results.live.meanPeakOffsetBeats - expected;
+    check(Math.abs(err) < 0.05, `live: timing matches video mode within ${(err * 60000 / results.live.bpm).toFixed(0)} ms (live ${results.live.meanPeakOffsetBeats}, expected ${expected.toFixed(3)} beats)`);
+  }
 }
 if (results.practice) {
   check(results.practice.judgements > 10 && results.practice.bpm === 96 && !results.practice.errors.length,

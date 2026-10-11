@@ -121,3 +121,26 @@ test('a groove dominated by a loud 3-3-2 rim pattern keeps the true tempo and ph
   assert.ok(Math.abs(g.bpm / 87 - 1) < 0.03, `bpm ${g.bpm}`);
   assert.ok(Math.abs(wrapBeats((g.anchor - beats[0]) / period)) < 0.08);
 });
+
+import { cameraFrameTime, micInputDelay, CAMERA_DELAY_DEFAULT, MIC_DELAY_DEFAULT } from '../src/core/latency.js';
+
+test('camera frames use the capture timestamp when the browser gives one', () => {
+  const r = cameraFrameTime({ captureTime: 9950, presentationTime: 9990 }, 10000);
+  assert.equal(r.source, 'timestamp');
+  assert.ok(Math.abs(r.t - 9.95) < 1e-9);
+});
+
+test('camera frames without (or with implausible) capture stamps get the default delay', () => {
+  for (const meta of [{ presentationTime: 9990 }, { captureTime: 20000, presentationTime: 9990 }, { captureTime: 1000, presentationTime: 9990 }]) {
+    const r = cameraFrameTime(meta, 10000);
+    assert.equal(r.source, 'estimate');
+    assert.ok(Math.abs(r.t - (9.99 - CAMERA_DELAY_DEFAULT)) < 1e-9);
+  }
+});
+
+test('microphone delay: reported latency if sane, otherwise the default', () => {
+  assert.equal(micInputDelay({ getSettings: () => ({ latency: 0.04 }) }).delay, 0.04);
+  assert.equal(micInputDelay({ getSettings: () => ({ latency: 3 }) }).delay, MIC_DELAY_DEFAULT);
+  assert.equal(micInputDelay({ getSettings: () => ({}) }).delay, MIC_DELAY_DEFAULT);
+  assert.equal(micInputDelay(undefined).delay, MIC_DELAY_DEFAULT);
+});
