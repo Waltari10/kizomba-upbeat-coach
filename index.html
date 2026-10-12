@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="css/style.css" />
   </head>
-  <body data-screen="setup" data-source="mic" data-visual="1" data-mirror="1">
+  <body data-screen="setup" data-source="mic" data-mode="upbeat" data-visual="1" data-mirror="1">
     <!-- ================= Setup ================= -->
     <section id="setup" class="screen">
       <div class="card">
@@ -34,6 +34,26 @@
         </details>
 
         <form id="setup-form">
+          <fieldset>
+            <legend>Mode</legend>
+            <div class="seg">
+              <label><input type="radio" name="mode" value="upbeat" checked /><span>Up-beat</span></label>
+              <label><input type="radio" name="mode" value="steps" /><span>Up-beat + basic step</span></label>
+            </div>
+            <p class="hint only-steps">Also checks the three parts of every step: <b>1. weight transfer</b> (hips over
+              the new foot), <b>2. push up</b> (rise once the weight has arrived), <b>3. relax the hip</b> (sink as you
+              travel to the other foot, so your hip draws a smiley face). Throughout, keep the <b>shoulders still</b>, as if
+              standing between two walls: only the hips move sideways. Face the camera and step side to side.</p>
+            <div class="only-steps">
+              <div class="seg" role="radiogroup" aria-label="Step speed">
+                <label><input type="radio" name="stepBeats" value="1" checked /><span>Step every beat</span></label>
+                <label><input type="radio" name="stepBeats" value="2" /><span>Every 2 beats</span></label>
+                <label><input type="radio" name="stepBeats" value="4" /><span>Every 4 beats</span></label>
+              </div>
+              <p class="hint">Slower steps are a good drill: same three parts, more time for each. Push up so the high point lands on a beat.</p>
+            </div>
+          </fieldset>
+
           <fieldset>
             <legend>Music</legend>
             <label class="opt"><input type="radio" name="source" value="mic" checked />
@@ -118,6 +138,15 @@
           <span id="status-icon" class="status-icon">…</span>
           <div><div id="status-label" class="status-label">Loading…</div><div id="status-sub" class="status-sub"></div></div>
         </div>
+        <div id="steps" class="steps only-steps" aria-live="polite">
+          <div class="step-chips">
+            <span data-step="transfer"><b>1</b> Weight transfer</span>
+            <span data-step="push"><b>2</b> Push up</span>
+            <span data-step="relax"><b>3</b> Relax hip ‿</span>
+            <span data-step="shoulders"><b>‖</b> Shoulders still</span>
+          </div>
+          <div id="step-hint" class="step-hint"></div>
+        </div>
         <div class="panels">
           <div class="panel dial-panel" title="Where your highest point falls in the beat">
             <svg viewBox="-60 -60 120 120" class="dial" aria-hidden="true">
@@ -149,6 +178,10 @@
           <label>Sound feedback
             <select id="d-sound"><option value="off">Silent</option><option value="tones">Tones</option><option value="voice">Voice coach</option></select></label>
           <label class="check"><input id="d-click" type="checkbox" /> Tick on every beat</label>
+          <div class="only-steps">
+            <label>Step speed
+              <select id="d-steps"><option value="1">One step every beat</option><option value="2">One step every 2 beats</option><option value="4">One step every 4 beats</option></select></label>
+          </div>
           <label>Sensitivity (smaller bounces count)
             <input id="d-sens" type="range" min="0.5" max="3" step="0.1" /></label>
           <p class="hint" id="d-auto"></p>
@@ -192,6 +225,7 @@
         <div id="sum-score" class="big-score">–</div>
         <p class="caps">of judged beats on the up-beat</p>
         <p id="sum-verdict" class="verdict"></p>
+        <div id="sum-steps" class="sum-steps only-steps"></div>
         <div id="sum-timeline" class="timeline wide"></div>
         <p id="sum-details" class="muted"></p>
         <button id="btn-again" class="primary">Dance again</button>

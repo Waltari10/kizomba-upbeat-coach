@@ -1,5 +1,6 @@
 import { createPoseDetector, DancerTracker, SKELETON } from './pose.js';
 import { BounceAnalyzer, HeightNormalizer, hipHeight } from './core/bounce.js';
+import { StepAnalyzer } from './core/steps.js';
 import { BeatTracker } from './core/beatTracker.js';
 import { MicBeatSource } from './audio/micBeat.js';
 import { PracticeBeat } from './audio/practiceBeat.js';
@@ -21,8 +22,23 @@ const STATUS = {
   loading: { label: 'Loading…', icon: '…', sub: '', cls: 'idle' },
 };
 
+// Basic-step mode: what to say about the first of the three steps that is missing.
+const STEP_HINTS = {
+  'transfer-small': 'Shift your hips fully over the foot you step on',
+  'transfer-irregular': 'Step from foot to foot in time: one step every {n}',
+  'push-none': 'Push up from the floor once your weight arrives',
+  'push-early': 'Arrive on the foot first, then push up',
+  'relax-flat': 'Relax the hip down between steps: draw a smile ‿',
+  'relax-frown': 'Your hip rises between the feet. Let it sink instead: a smile ‿, not a frown ⁀',
+  'shoulders-moving': 'Keep your shoulders still, as if between two walls: only the hips move',
+};
+const STEP_KEYS = ['transfer', 'push', 'relax', 'shoulders'];
+const emptyStepStats = () => ({ judged: 0, transfer: 0, push: 0, relax: 0, shoulders: 0, all: 0 });
+
 const STORE_KEY = 'kizomba-coach-settings';
 const settings = {
+  mode: 'upbeat', // 'upbeat' | 'steps' (also checks the basic step technique)
+  stepBeats: 1, // basic-step mode: beats per step (1, 2 or 4)
   source: 'mic',
   bpm: 90,
   facing: 'user',
@@ -49,6 +65,7 @@ const app = (window.kizomba = {
   settings,
   log: [],
   stats: { up: 0, down: 0, still: 0, irregular: 0, halftime: 0 },
+  stepStats: emptyStepStats(),
   state: 'setup',
   ready: false,
   perf: { frames: 0, detectMs: 0 },
@@ -56,11 +73,13 @@ const app = (window.kizomba = {
   poseLog: [],
 });
 
-let ctx, pose, beatSource, fileBeat, feedback, analyzer, normalizer, dancer, wakeLock;
+let ctx, pose, beatSource, fileBeat, feedback, analyzer, stepAnalyzer, normalizer, dancer, wakeLock;
 let running = false;
 let lastJudgedBeat = null;
 let current = { status: 'loading' };
 let streak = { status: null, n: 0 };
+let stepStreak = { key: null, n: 0 };
+let hipTrail = []; // recent hip positions (image coords) for drawing the smile in basic-step mode
 let latest = { t: null, landmarks: null };
 let startedAt = 0;
 const video = $('#video');
@@ -68,6 +87,8 @@ const video = $('#video');
 // ---------- Setup screen ----------
 function bindSetup() {
   const form = $('#setup-form');
+  form.mode.value = settings.mode;
+  form.stepBeats.value = String(settings.stepBeats);
   form.source.value = settings.source;
   form.facing.value = settings.facing;
   form.sound.value = settings.sound;
@@ -78,12 +99,15 @@ function bindSetup() {
   $('#beat-click').checked = settings.beatClick;
   const syncSource = () => {
     document.body.dataset.source = form.source.value;
+    document.body.dataset.mode = form.mode.value;
   };
   syncSource();
   form.addEventListener('change', syncSource);
   $('#bpm').addEventListener('input', (e) => ($('#bpm-out').textContent = e.target.value));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
+    settings.mode = form.mode.value;
+    settings.stepBeats = +form.stepBeats.value;
     settings.source = form.source.value;
     settings.facing = form.facing.value;
     settings.sound = form.sound.value;
@@ -132,13 +156,18 @@ async function start() {
   feedback = new AudioFeedback(ctx);
   applyFeedbackSettings();
   analyzer = new BounceAnalyzer();
+  stepAnalyzer = new StepAnalyzer({ stepBeats: settings.stepBeats });
   normalizer = new HeightNormalizer();
   dancer = new DancerTracker();
   applySensitivity();
   app.log = [];
   app.stats = { up: 0, down: 0, still: 0, irregular: 0, halftime: 0 };
+  app.stepStats = emptyStepStats();
   lastJudgedBeat = null;
   streak = { status: null, n: 0 };
+  stepStreak = { key: null, n: 0 };
+  hipTrail = [];
+  showSteps(null);
   document.body.dataset.mirror = settings.source !== 'file' && settings.facing === 'user' ? '1' : '0';
 
   // ?cpu=1 forces the slower CPU pose model (for testing the fallback path).
@@ -247,6 +276,8 @@ function processFrame(now, meta) {
   if (latest.t != null && t < latest.t - 0.3) {
     // Seeked backwards in a file.
     analyzer.reset();
+    stepAnalyzer.reset();
+    hipTrail = [];
     lastJudgedBeat = null;
   }
   const d0 = performance.now();
@@ -256,14 +287,22 @@ function processFrame(now, meta) {
   if (switched) {
     // A different person was picked up: their hip height is not comparable.
     analyzer.reset();
+    stepAnalyzer.reset();
     normalizer.reset();
+    hipTrail = [];
   }
   app.perf.frames++;
   app.perf.detectMs += (performance.now() - d0 - app.perf.detectMs) * 0.05;
   latest = { t, landmarks, sampleT };
   if (app.recordPose && landmarks) app.poseLog.push({ t: sampleT, lm: landmarks.map((p) => [+p.x.toFixed(5), +p.y.toFixed(5), +(p.visibility ?? 1).toFixed(2)]) });
   const m = hipHeight(landmarks, video.videoWidth / video.videoHeight || 1);
-  if (m) analyzer.addSample(sampleT, normalizer.height(m));
+  if (m) {
+    const h = normalizer.height(m);
+    analyzer.addSample(sampleT, h);
+    stepAnalyzer.addSample(sampleT, { h, ...normalizer.lateral(m) });
+    hipTrail.push({ t: sampleT, x: m.hipX, y: m.hipY });
+    while (hipTrail.length && hipTrail[0].t < sampleT - 8) hipTrail.shift();
+  }
   judge(sampleT);
 }
 
@@ -279,15 +318,38 @@ function judge(t) {
   const beatT = grid.anchor + Math.floor((t - grid.anchor) / grid.period - 0.5) * grid.period;
   if (lastJudgedBeat !== null && beatT < lastJudgedBeat + 0.5 * grid.period) return;
   lastJudgedBeat = beatT;
-  const r = analyzer.analyze(t, grid);
+  const steps = settings.mode === 'steps';
+  const st = steps ? stepAnalyzer.analyze(t, grid) : null;
+  // Slow steps rise and fall once per 2 or 4 beats, which the once-per-beat analysis can't judge
+  // (it would say "every 2nd beat"); the step analyzer judges the high point at the step's tempo.
+  let r = analyzer.analyze(t, grid);
+  if (steps && settings.stepBeats > 1) {
+    r = st ? { status: st.status, offset: st.offset, amplitude: st.amplitude, rhythmicity: st.rhythmicity } : { status: 'insufficient' };
+  }
   r.bpm = grid.bpm;
   setStatus(r);
   if (r.status === streak.status) streak.n++;
   else streak = { status: r.status, n: 1 };
   if (r.status in app.stats) app.stats[r.status]++;
-  app.log.push({ t: +t.toFixed(3), status: r.status, offset: r.offset, amplitude: r.amplitude, rhythmicity: r.rhythmicity, bpm: grid.bpm });
+  const entry = { t: +t.toFixed(3), status: r.status, offset: r.offset, amplitude: r.amplitude, rhythmicity: r.rhythmicity, bpm: grid.bpm };
+  let stepsSpoke = false;
+  if (steps) {
+    showSteps(st);
+    if (st) {
+      const ss = app.stepStats;
+      ss.judged++;
+      for (const k of STEP_KEYS) if (st[k] === 'ok') ss[k]++;
+      if (!st.firstMiss) ss.all++;
+      const key = st.firstMiss && `${st.firstMiss}-${st[st.firstMiss]}`;
+      if (key === stepStreak.key) stepStreak.n++;
+      else stepStreak = { key, n: 1 };
+      stepsSpoke = feedback.onSteps(key, stepStreak.n);
+      entry.steps = { transfer: st.transfer, push: st.push, relax: st.relax, shoulders: st.shoulders, sway: +st.sway.toFixed(3), shoulderSway: st.shoulderSway == null ? null : +st.shoulderSway.toFixed(3), lag: st.lag == null ? null : +st.lag.toFixed(3) };
+    }
+  }
+  app.log.push(entry);
   if (['up', 'down', 'still', 'irregular', 'halftime'].includes(r.status)) {
-    feedback.onJudgement(r.status, streak.n);
+    if (!stepsSpoke) feedback.onJudgement(r.status, streak.n);
     if (settings.visual) flash(STATUS[r.status].cls);
     pushTimeline(r.status);
   }
@@ -309,6 +371,18 @@ function setStatus(r) {
     needle.style.opacity = String(0.35 + 0.65 * Math.min(1, (r.rhythmicity || 0) * 1.5));
   }
   $('#bounce-size').textContent = r.amplitude != null ? `${(r.amplitude * 2 * 50).toFixed(1)} cm` : '–';
+}
+
+// Basic-step mode: colour the three step chips and show a hint for the first missing step.
+function showSteps(st) {
+  document.querySelectorAll('#steps [data-step]').forEach((el) => {
+    const v = st?.[el.dataset.step];
+    el.className = v === 'ok' ? 'ok' : v && v !== 'unknown' ? 'miss' : '';
+  });
+  const n = settings.stepBeats;
+  const hint = st?.firstMiss ? (STEP_HINTS[`${st.firstMiss}-${st[st.firstMiss]}`] || '').replace('{n}', n === 1 ? 'beat' : `${n} beats`) : '';
+  $('#step-hint').textContent = !st ? '' : st.firstMiss ? hint : 'Transfer · push up · relax · still shoulders ✓';
+  current.steps = st;
 }
 
 function updateScore() {
@@ -342,6 +416,10 @@ function applyFeedbackSettings() {
 
 function applySensitivity() {
   if (analyzer) analyzer.opts.minAmplitude = 0.01 / settings.sensitivity;
+  if (stepAnalyzer) {
+    stepAnalyzer.opts.minAmplitude = 0.01 / settings.sensitivity;
+    stepAnalyzer.opts.minDip = 0.01 / settings.sensitivity;
+  }
 }
 
 // ---------- Drawing ----------
@@ -370,6 +448,7 @@ function render() {
   }
   if (beatSource instanceof MicBeatSource) $('#level').style.width = `${Math.min(100, beatSource.level * 160)}%`;
   drawSkeleton(grid);
+  if (settings.mode === 'steps') drawHipTrail();
   drawTrace(grid);
 }
 
@@ -421,6 +500,40 @@ function drawSkeleton(grid) {
   octx.beginPath();
   octx.arc(hx, hy, (14 + 22 * pulse) * dpr, 0, Math.PI * 2);
   octx.stroke();
+  octx.globalAlpha = 1;
+}
+
+// The hip's path over the last two beats, drawn around the hips with the up-and-down movement
+// exaggerated so the smile (or frown) is visible: green when the relax step is right.
+function drawHipTrail() {
+  const lm = latest.landmarks;
+  if (!lm || hipTrail.length < 3 || !video.videoWidth) return;
+  const { w, h, dpr } = fitCanvas(overlay);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cover = !fileBeat;
+  const scale = cover ? Math.max(w / vw, h / vh) : Math.min(w / vw, h / vh);
+  const ox = (w - vw * scale) / 2, oy = (h - vh * scale) / 2;
+  const step = (getGrid(latest.sampleT)?.period ?? 0.65) * settings.stepBeats;
+  const pts = hipTrail.filter((p) => p.t >= latest.sampleT - 2 * step);
+  if (pts.length < 3) return;
+  const meanY = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+  const cy = (lm[23].y + lm[24].y) / 2;
+  const relax = current.steps?.relax;
+  octx.strokeStyle = relax === 'ok' ? '#3ee08f' : relax && relax !== 'unknown' ? '#ff5d6c' : '#ffffff';
+  octx.lineWidth = 5 * dpr;
+  octx.lineCap = octx.lineJoin = 'round';
+  octx.beginPath();
+  pts.forEach((p, i) => {
+    const x = ox + p.x * vw * scale;
+    const y = oy + (cy + 4 * (p.y - meanY)) * vh * scale;
+    octx.globalAlpha = 0.15 + 0.85 * (i / (pts.length - 1));
+    if (i) {
+      octx.lineTo(x, y);
+      octx.stroke();
+      octx.beginPath();
+    }
+    octx.moveTo(x, y);
+  });
   octx.globalAlpha = 1;
 }
 
@@ -490,6 +603,7 @@ function bindDrawer() {
     $('#d-offset').value = settings.offsetMs;
     $('#d-offset-out').textContent = settings.offsetMs;
     $('#d-sens').value = settings.sensitivity;
+    $('#d-steps').value = String(settings.stepBeats);
     $('#d-half').checked = settings.halfShift;
     $('#d-auto').textContent = autoCorrectionText();
   };
@@ -501,6 +615,8 @@ function bindDrawer() {
     settings.beatClick = $('#d-click').checked;
     settings.offsetMs = +$('#d-offset').value;
     settings.sensitivity = +$('#d-sens').value;
+    settings.stepBeats = +$('#d-steps').value;
+    if (stepAnalyzer) stepAnalyzer.opts.stepBeats = settings.stepBeats;
     const half = $('#d-half').checked;
     if (half !== settings.halfShift) {
       settings.halfShift = half;
@@ -530,6 +646,13 @@ function renderSummary() {
           ? 'Mixed: you switch between the up-beat and the down-beat.'
           : 'Mostly on the down-beat. Try rising on the beat and sinking on the “and”.';
   $('#sum-details').textContent = `${up} up-beat · ${down} down-beat · ${halftime} every-2nd-beat · ${still} too still · ${irregular} irregular · ${fileBeat ? '' : `${mins.toFixed(1)} min`}`;
+  const ss = app.stepStats;
+  const pctOf = (n) => (ss.judged ? Math.round((100 * n) / ss.judged) : null);
+  $('#sum-steps').innerHTML = !ss.judged
+    ? '<p class="muted">Basic step: not enough side-to-side stepping in view to check the steps.</p>'
+    : [['1. Weight transfer', ss.transfer], ['2. Push up', ss.push], ['3. Relax hip ‿', ss.relax], ['Shoulders still', ss.shoulders], ['All four', ss.all]]
+        .map(([label, n]) => `<div class="row"><span>${label}</span><span class="bar"><i style="width:${pctOf(n)}%"></i></span><b>${pctOf(n)}%</b></div>`)
+        .join('');
   $('#sum-timeline').innerHTML = app.log
     .filter((l) => ['up', 'down', 'still', 'irregular', 'halftime'].includes(l.status))
     .map((l) => `<i class="${STATUS[l.status].cls}"></i>`)

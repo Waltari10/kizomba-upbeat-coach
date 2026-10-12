@@ -28,6 +28,59 @@ oscillation is the position of your high point within the beat: near the beat me
 near the "and" means down-beat. Movement that rises and falls over *two* beats is modelled
 separately. If that's all you do, the app says "Every 2nd beat" instead of guessing.
 
+## Basic-step mode
+
+Pick **Mode → Up-beat + basic step** on the start screen. On top of the up-beat verdict, the coach
+checks the three parts of every Kizomba basic step:
+
+1. **Weight transfer**: the hips travel sideways over the foot you step on.
+2. **Push up**: once the weight has arrived, push up from the floor. That's your high point.
+3. **Relax the hip**: soften and let the hip sink as it travels to the other foot. Seen from the
+   front, the hip draws a **smiley face** ‿: high over each foot, low in the middle.
+
+Throughout, the **shoulders stay still** sideways, as if you were standing between two walls:
+the hips do the travelling, not the whole body.
+
+**Step speed** (start screen, and in Settings during a session): one step every beat, every
+2 beats or every 4 beats. Slow steps are a common drill: the same three parts, with more time
+for each. Everything is measured at the chosen tempo: the hips sway sideways once per two steps
+and rise once per step. For slow steps, the up-beat verdict is also judged per step, so a
+step that rises over 2 beats isn't reported as "Every 2nd beat": it's UP-BEAT when the
+high point lands on a beat and DOWN-BEAT when it lands between beats.
+
+Four chips above the panels (the three steps plus "Shoulders still") turn green or red on every beat, with a hint for the first step
+that's missing ("Arrive on the foot first, then push up", …). The hip's path over the last two
+beats is drawn around your hips, with the up-and-down movement exaggerated so you can see the smile.
+The voice coach says the hint out loud, and the summary shows how often each step was there.
+
+How it's measured (`src/core/steps.js`): the steps alternate feet, so the hips sway sideways once
+every two beats while they rise and fall once per beat. A two-beat oscillation is fitted to the
+sideways hip position. Its extremes are the moments the weight arrives over a foot.
+
+- Transfer is OK when the sideways sway is at least ~3 cm and at least 30% of the distance
+  between the ankles, and repeats with the steps.
+- The **lag** is how long after the weight arrives the hip reaches its high point, as a
+  fraction of a step. Push up is OK from −0.1 to +0.45 steps: the rise comes once the weight is
+  on the foot, not while travelling.
+- Shoulders still: the middle of the shoulders gets the same sideways fit as the hips. Its
+  sway at the step rhythm may be at most ~2.5 cm or 0.55× the hips' sway, whichever is larger.
+  In the teacher video, the shoulders moved 0.26–0.57× as far as the hips (quartiles). Moving the
+  whole body as a block gives about 1×. If the shoulders aren't visible, this check is skipped.
+- Relax is OK when the hip sinks at least ~0.5 cm below its standing height on the way to the
+  other foot: dip = A·(1 + cos(2π·lag)), where A is the bounce size. That dip is the smile. A lag
+  near ±½ beat means the hip rises between the feet and drops over the foot (a frown).
+
+The thresholds were tuned on a teacher's basic side steps (one per beat) in a real video (the workout clip used
+by the e2e tests). There, the push up came 0.1–0.4 beats after the weight landed, and about
+three-quarters of those steps pass all three checks. Moving the soundtrack by half a beat flips
+the up-beat verdict but leaves the step results almost unchanged, as it should: the steps are
+measured against the dancer's own sideways movement, not against the music. The sensitivity
+slider scales the push-up and relax minimums too.
+
+Face the camera and step side to side; steps straight towards or away from the camera have no
+sideways sway to measure. Push up and relax are only judged once a weight transfer is seen,
+because the transfer is the reference for "after the weight arrives".
+
 ## Music sources
 
 | Source | How the beat is found |
@@ -120,7 +173,7 @@ accuracy on a real device is still to be confirmed.
 ## Tests
 
 ```bash
-npm test                     # unit tests: onset detection, beat tracking, bounce analysis
+npm test                     # unit tests: onset detection, beat tracking, bounce and step analysis
 bash test/e2e/fetch-media.sh # downloads public Kizomba videos from YouTube (needs yt-dlp + ffmpeg)
 npx playwright install chromium
 npm run e2e                  # end-to-end simulation in headless Chromium (~12 min, real time)
@@ -161,6 +214,7 @@ src/pose.js                   MediaPipe PoseLandmarker wrapper (GPU with CPU fal
 src/core/onset.js             FFT + spectral-flux onset detector
 src/core/beatTracker.js       tempo/phase tracker, offline grid precomputation
 src/core/bounce.js            hip-height extraction and up/down-beat analysis
+src/core/steps.js             basic-step checks: weight transfer, push up, relax (smile), still shoulders
 src/audio/                    mic capture worklet, practice groove, file analysis, clock sync
 src/ui/feedback.js            tones, voice coach, beat tick
 server.mjs                    zero-dependency static server (http + self-signed https)

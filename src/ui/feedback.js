@@ -9,6 +9,14 @@ const PHRASES = {
   still: ['Bend your knees a little more', 'Add a small bounce'],
   halftime: ['Add a small lift on every beat', 'Bounce on every beat, not every other'],
   irregular: ['Keep a steady pulse', 'Find the pulse of the music'],
+  // Basic-step mode: the first of the three steps that is missing.
+  'transfer-small': ['Shift your weight fully onto each foot', 'Move your hips over the foot you step on'],
+  'transfer-irregular': ['Step from foot to foot on every beat'],
+  'push-none': ['Push up from the floor after each step', 'Push up once your weight arrives'],
+  'push-early': ['Arrive on the foot first, then push up', 'Weight first, then push up'],
+  'relax-flat': ['Relax the hip down between steps', 'Draw a smile with your hip'],
+  'shoulders-moving': ['Keep your shoulders still, only the hips move', 'Imagine two walls beside your shoulders'],
+  'relax-frown': ['Let the hip sink as you travel, a smile, not a frown', 'Relax down in the middle of the step'],
 };
 
 export class AudioFeedback {
@@ -63,6 +71,17 @@ export class AudioFeedback {
       const want = status === 'down' || status === 'still' || status === 'irregular' || status === 'halftime' || (status === 'up' && (changed || streak % 16 === 0));
       if (want && streak >= 2 && now - this.lastSpoken > gap) this.say(status);
     }
+  }
+
+  // Basic-step mode, once per judged beat: `key` is the first missing step (e.g. 'push-early')
+  // or null when all three are there. Takes over from the up-beat phrases while a step is
+  // missing; returns true if it did.
+  onSteps(key, streak) {
+    if (this.mode !== 'voice' || !key) return false;
+    const now = performance.now();
+    const gap = key !== this.lastSpokenStatus ? 4000 : 10000;
+    if (streak >= 3 && now - this.lastSpoken > gap) this.say(key);
+    return true;
   }
 
   say(status) {

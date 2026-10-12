@@ -11,7 +11,7 @@
 // steps rise and fall over a pair of steps — so it does not get mistaken for noise. The fit also
 // gives the bounce size (A) and how rhythmic the movement is (share of motion explained).
 
-function solve(M, v) {
+export function solve(M, v) {
   // Gaussian elimination with partial pivoting for a small dense system.
   const n = v.length;
   const a = M.map((row, i) => [...row, v[i]]);
@@ -117,7 +117,10 @@ export class BounceAnalyzer {
 }
 
 // Height signal from MediaPipe pose landmarks (normalised image coords, y grows downward).
-// Returns { hipY, torso, hipX } or null if the body is not visible enough.
+// Returns { hipY, torso, hipX, hipXa, shXa, ankleSpread } or null if the body is not visible
+// enough. hipXa is hipX scaled by the aspect ratio (same units as hipY), shXa the same for the
+// middle of the shoulders (null unless both are visible); ankleSpread is the sideways distance
+// between the ankles in those units, or null when the feet are not visible.
 export function hipHeight(landmarks, aspect = 1) {
   if (!landmarks) return null;
   const L = (i) => landmarks[i];
@@ -128,7 +131,10 @@ export function hipHeight(landmarks, aspect = 1) {
   const shX = (ls.x + rs.x) / 2, shY = (ls.y + rs.y) / 2;
   const torso = Math.hypot((hipX - shX) * aspect, hipY - shY);
   if (torso < 0.03) return null;
-  return { hipY, hipX, torso };
+  const la = L(27), ra = L(28);
+  const ankleSpread = la && ra && vis(la) && vis(ra) ? Math.abs(la.x - ra.x) * aspect : null;
+  const shXa = vis(ls) && vis(rs) ? shX * aspect : null;
+  return { hipY, hipX, hipXa: hipX * aspect, shXa, torso, ankleSpread };
 }
 
 // Converts hip y positions into heights measured in torso lengths. The torso length is
@@ -144,5 +150,11 @@ export class HeightNormalizer {
   height(m) {
     this.torso = this.torso == null ? m.torso : this.torso + this.alpha * (m.torso - this.torso);
     return -m.hipY / this.torso;
+  }
+  // Sideways hip and shoulder positions and ankle spread in torso lengths (call after height()
+  // for the frame).
+  lateral(m) {
+    const n = (v) => (v == null ? null : v / this.torso);
+    return { x: n(m.hipXa), sx: n(m.shXa), spread: n(m.ankleSpread) };
   }
 }
